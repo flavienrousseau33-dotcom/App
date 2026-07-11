@@ -1,5 +1,6 @@
-import { supabase } from '@/lib/supabase';
 import { clusterPhotoPoints, type GeoPoint } from '@/lib/geo';
+import { applySavedPlacesToNewStay } from '@/lib/savedPlaces';
+import { supabase } from '@/lib/supabase';
 import type { Stay } from '@/types/database';
 
 // Scanning thousands of assets means thousands of native calls to read EXIF
@@ -135,14 +136,23 @@ export async function scanPhotosAndSyncStays(
   await supabase.from('stays').delete().eq('user_id', userId).eq('source', 'photos');
 
   if (stays.length > 0) {
-    const { error } = await supabase.from('stays').insert(
-      stays.map((stay) => ({
-        ...stay,
-        user_id: userId,
-        source: 'photos' as const,
-      }))
-    );
+    const { data: inserted, error } = await supabase
+      .from('stays')
+      .insert(
+        stays.map((stay) => ({
+          ...stay,
+          user_id: userId,
+          source: 'photos' as const,
+        }))
+      )
+      .select();
     if (error) throw error;
+
+    // Immediately hide any newly recorded visit to a place the user has
+    // already chosen to hide (home/work/frequent) from "Paramètres".
+    for (const stay of inserted ?? []) {
+      await applySavedPlacesToNewStay(userId, stay).catch(() => {});
+    }
   }
 
   onProgress?.({ phase: 'done', current: stays.length, total: stays.length });

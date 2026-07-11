@@ -201,6 +201,49 @@ create policy "Users can delete their own stays"
   on public.stays for delete
   using (auth.uid() = user_id);
 
+-- 3b. Saved places (Maison / Travail / Lieux fréquents) ----------------------
+-- Reference points managed from the "Paramètres > Lieux cachés" screen.
+-- 'home' and 'work' are single, user-declared addresses; 'frequent' entries
+-- are auto-populated from lib/homeDetection.ts (places visited 3+ times).
+-- Entirely private — never exposed to connections, only used server-side
+-- (via lib/savedPlaces.ts) to decide which of the owner's *stays* get
+-- is_hidden = true.
+create table if not exists public.saved_places (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.profiles (id) on delete cascade,
+  kind text not null check (kind in ('home', 'work', 'frequent')),
+  address text,
+  latitude double precision,
+  longitude double precision,
+  is_hidden boolean not null default false,
+  created_at timestamptz not null default now()
+);
+
+-- At most one "home" and one "work" entry per user; any number of "frequent".
+create unique index if not exists saved_places_home_work_uniq
+  on public.saved_places (user_id, kind)
+  where kind in ('home', 'work');
+
+create index if not exists saved_places_user_idx on public.saved_places (user_id);
+
+alter table public.saved_places enable row level security;
+
+create policy "Users can view their own saved places"
+  on public.saved_places for select
+  using (auth.uid() = user_id);
+
+create policy "Users can insert their own saved places"
+  on public.saved_places for insert
+  with check (auth.uid() = user_id);
+
+create policy "Users can update their own saved places"
+  on public.saved_places for update
+  using (auth.uid() = user_id);
+
+create policy "Users can delete their own saved places"
+  on public.saved_places for delete
+  using (auth.uid() = user_id);
+
 -- 4. Admin / back office -----------------------------------------------------
 -- Bootstrap the first admin manually from the SQL editor, e.g.:
 --   update public.profiles set is_admin = true where username = 'yourusername';

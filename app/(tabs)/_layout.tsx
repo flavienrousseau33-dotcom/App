@@ -56,6 +56,19 @@ export default function TabLayout() {
           ),
         }}
       />
+      <Tabs.Screen
+        name="settings"
+        options={{
+          title: 'Paramètres',
+          tabBarIcon: ({ color }) => (
+            <SymbolView
+              name={{ ios: 'eye.slash.fill', android: 'visibility_off', web: 'visibility_off' }}
+              tintColor={color}
+              size={26}
+            />
+          ),
+        }}
+      />
     </Tabs>
   );
 }

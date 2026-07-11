@@ -8,7 +8,9 @@ import { Text, View } from '@/components/Themed';
 import Colors from '@/constants/Colors';
 import { useColorScheme } from '@/components/useColorScheme';
 import { useAuth } from '@/hooks/useAuth';
+import { applySavedPlacesToNewStay } from '@/lib/savedPlaces';
 import { supabase } from '@/lib/supabase';
+import type { Stay } from '@/types/database';
 
 function toIsoDate(date: Date): string {
   return date.toISOString().slice(0, 10);
@@ -62,17 +64,26 @@ export default function NewStayScreen() {
         // Ignore — geocoding is a nice-to-have here, not a requirement.
       }
 
-      const { error } = await supabase.from('stays').insert({
-        user_id: user.id,
-        city: city.trim(),
-        country: country.trim() || null,
-        latitude,
-        longitude,
-        start_date: toIsoDate(startDate),
-        end_date: toIsoDate(endDate),
-        source: 'manual',
-      });
+      const { data: inserted, error } = await supabase
+        .from('stays')
+        .insert({
+          user_id: user.id,
+          city: city.trim(),
+          country: country.trim() || null,
+          latitude,
+          longitude,
+          start_date: toIsoDate(startDate),
+          end_date: toIsoDate(endDate),
+          source: 'manual',
+        })
+        .select()
+        .single();
       if (error) throw error;
+
+      // Immediately hide it if it falls within a place already hidden
+      // from "Paramètres" (home/work/frequent).
+      await applySavedPlacesToNewStay(user.id, inserted as Stay).catch(() => {});
+
       router.back();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Une erreur est survenue.');

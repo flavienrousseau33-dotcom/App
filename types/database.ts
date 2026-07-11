@@ -27,6 +27,19 @@ export type Stay = {
   created_at: string;
 };
 
+export type SavedPlaceKind = 'home' | 'work' | 'frequent';
+
+export type SavedPlace = {
+  id: string;
+  user_id: string;
+  kind: SavedPlaceKind;
+  address: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  is_hidden: boolean;
+  created_at: string;
+};
+
 export type ConnectionStatus = 'pending' | 'accepted' | 'declined';
 
 export type Connection = {
@@ -102,6 +115,19 @@ export type Database = {
           {
             foreignKeyName: 'connections_addressee_id_fkey';
             columns: ['addressee_id'];
+            referencedRelation: 'profiles';
+            referencedColumns: ['id'];
+          },
+        ];
+      };
+      saved_places: {
+        Row: SavedPlace;
+        Insert: Partial<SavedPlace> & { user_id: string; kind: SavedPlaceKind };
+        Update: Partial<SavedPlace>;
+        Relationships: [
+          {
+            foreignKeyName: 'saved_places_user_id_fkey';
+            columns: ['user_id'];
             referencedRelation: 'profiles';
             referencedColumns: ['id'];
           },
