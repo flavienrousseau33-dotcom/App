@@ -2,6 +2,8 @@
 -- for your project before running the app.
 
 -- 1. Profiles -----------------------------------------------------------
+-- Public by design: usernames/display names must be searchable so people can
+-- send connection requests. No location data lives here.
 create table if not exists public.profiles (
   id uuid primary key references auth.users (id) on delete cascade,
   username text unique not null,
@@ -47,85 +49,96 @@ create trigger on_auth_user_created
   after insert on auth.users
   for each row execute procedure public.handle_new_user();
 
--- 2. Posts ----------------------------------------------------------------
-create table if not exists public.posts (
+-- 2. Connections --------------------------------------------------------
+-- A "friend request" model. Two users only see each other's stays (see
+-- below) once a request has been sent and accepted by the addressee.
+create table if not exists public.connections (
   id uuid primary key default gen_random_uuid(),
-  author_id uuid not null references public.profiles (id) on delete cascade,
-  content text not null check (char_length(content) between 1 and 500),
-  image_url text,
-  created_at timestamptz not null default now()
-);
-
-create index if not exists posts_created_at_idx on public.posts (created_at desc);
-
-alter table public.posts enable row level security;
-
-create policy "Posts are viewable by everyone"
-  on public.posts for select
-  using (true);
-
-create policy "Users can insert their own posts"
-  on public.posts for insert
-  with check (auth.uid() = author_id);
-
-create policy "Users can delete their own posts"
-  on public.posts for delete
-  using (auth.uid() = author_id);
-
--- 3. Likes ------------------------------------------------------------------
-create table if not exists public.likes (
-  post_id uuid not null references public.posts (id) on delete cascade,
-  user_id uuid not null references public.profiles (id) on delete cascade,
+  requester_id uuid not null references public.profiles (id) on delete cascade,
+  addressee_id uuid not null references public.profiles (id) on delete cascade,
+  status text not null default 'pending' check (status in ('pending', 'accepted', 'declined')),
   created_at timestamptz not null default now(),
-  primary key (post_id, user_id)
+  responded_at timestamptz,
+  check (requester_id <> addressee_id),
+  unique (requester_id, addressee_id)
 );
 
-alter table public.likes enable row level security;
+create index if not exists connections_addressee_idx on public.connections (addressee_id, status);
+create index if not exists connections_requester_idx on public.connections (requester_id, status);
 
-create policy "Likes are viewable by everyone"
-  on public.likes for select
-  using (true);
+alter table public.connections enable row level security;
 
-create policy "Users can like posts"
-  on public.likes for insert
+create policy "Users can view their own connections"
+  on public.connections for select
+  using (auth.uid() = requester_id or auth.uid() = addressee_id);
+
+create policy "Users can send connection requests"
+  on public.connections for insert
+  with check (auth.uid() = requester_id);
+
+create policy "Addressee can accept or decline, requester can cancel"
+  on public.connections for update
+  using (auth.uid() = requester_id or auth.uid() = addressee_id)
+  with check (auth.uid() = requester_id or auth.uid() = addressee_id);
+
+create policy "Either side can remove a connection"
+  on public.connections for delete
+  using (auth.uid() = requester_id or auth.uid() = addressee_id);
+
+-- Helper used by the stays policy below: true if the two users have an
+-- accepted connection (in either direction).
+create or replace function public.are_connected(user_a uuid, user_b uuid)
+returns boolean
+language sql
+security definer set search_path = public
+stable
+as $$
+  select exists (
+    select 1 from public.connections
+    where status = 'accepted'
+      and ((requester_id = user_a and addressee_id = user_b)
+        or (requester_id = user_b and addressee_id = user_a))
+  );
+$$;
+
+-- 3. Stays ----------------------------------------------------------------
+-- A "stay" is a period of time a person spent in one city, derived either
+-- from geotagged photos (processed on-device, only the city/date summary is
+-- synced — never raw GPS points or the photos themselves), entered manually,
+-- or (later) imported from Strava/Instagram.
+create table if not exists public.stays (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.profiles (id) on delete cascade,
+  city text not null,
+  region text,
+  country text,
+  latitude double precision,
+  longitude double precision,
+  start_date date not null,
+  end_date date not null,
+  source text not null default 'manual' check (source in ('manual', 'photos', 'strava', 'instagram')),
+  photo_count integer,
+  created_at timestamptz not null default now(),
+  check (end_date >= start_date)
+);
+
+create index if not exists stays_user_idx on public.stays (user_id, start_date);
+create index if not exists stays_city_idx on public.stays (lower(city));
+
+alter table public.stays enable row level security;
+
+create policy "Users can view their own stays or an accepted connection's"
+  on public.stays for select
+  using (auth.uid() = user_id or public.are_connected(auth.uid(), user_id));
+
+create policy "Users can insert their own stays"
+  on public.stays for insert
   with check (auth.uid() = user_id);
 
-create policy "Users can unlike their own likes"
-  on public.likes for delete
+create policy "Users can update their own stays"
+  on public.stays for update
   using (auth.uid() = user_id);
 
--- 4. Follows ------------------------------------------------------------------
-create table if not exists public.follows (
-  follower_id uuid not null references public.profiles (id) on delete cascade,
-  following_id uuid not null references public.profiles (id) on delete cascade,
-  created_at timestamptz not null default now(),
-  primary key (follower_id, following_id),
-  check (follower_id <> following_id)
-);
-
-alter table public.follows enable row level security;
-
-create policy "Follows are viewable by everyone"
-  on public.follows for select
-  using (true);
-
-create policy "Users can follow others"
-  on public.follows for insert
-  with check (auth.uid() = follower_id);
-
-create policy "Users can unfollow"
-  on public.follows for delete
-  using (auth.uid() = follower_id);
-
--- 5. Storage bucket for post images ------------------------------------------
-insert into storage.buckets (id, name, public)
-values ('post-images', 'post-images', true)
-on conflict (id) do nothing;
-
-create policy "Post images are publicly readable"
-  on storage.objects for select
-  using (bucket_id = 'post-images');
-
-create policy "Authenticated users can upload post images"
-  on storage.objects for insert
-  with check (bucket_id = 'post-images' and auth.role() = 'authenticated');
+create policy "Users can delete their own stays"
+  on public.stays for delete
+  using (auth.uid() = user_id);

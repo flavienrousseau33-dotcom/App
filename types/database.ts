@@ -7,18 +7,47 @@ export type Profile = {
   created_at: string;
 };
 
-export type Post = {
+export type StaySource = 'manual' | 'photos' | 'strava' | 'instagram';
+
+export type Stay = {
   id: string;
-  author_id: string;
-  content: string;
-  image_url: string | null;
+  user_id: string;
+  city: string;
+  region: string | null;
+  country: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  start_date: string; // ISO date (YYYY-MM-DD)
+  end_date: string; // ISO date (YYYY-MM-DD)
+  source: StaySource;
+  photo_count: number | null;
   created_at: string;
 };
 
-export type PostWithAuthorAndLikes = Post & {
-  author: Pick<Profile, 'id' | 'username' | 'display_name' | 'avatar_url'>;
-  like_count: number;
-  liked_by_me: boolean;
+export type ConnectionStatus = 'pending' | 'accepted' | 'declined';
+
+export type Connection = {
+  id: string;
+  requester_id: string;
+  addressee_id: string;
+  status: ConnectionStatus;
+  created_at: string;
+  responded_at: string | null;
+};
+
+export type ConnectionWithProfiles = Connection & {
+  requester: Pick<Profile, 'id' | 'username' | 'display_name' | 'avatar_url'>;
+  addressee: Pick<Profile, 'id' | 'username' | 'display_name' | 'avatar_url'>;
+};
+
+// Two stays (mine and a friend's) that overlap in both city and time.
+export type Crossing = {
+  city: string;
+  country: string | null;
+  overlapStart: string;
+  overlapEnd: string;
+  myStay: Stay;
+  friendStay: Stay;
 };
 
 // Minimal typed schema for the Supabase client. Extend as new tables are added.
@@ -31,30 +60,42 @@ export type Database = {
         Update: Partial<Profile>;
         Relationships: [];
       };
-      posts: {
-        Row: Post;
-        Insert: Partial<Post> & { author_id: string; content: string };
-        Update: Partial<Post>;
+      stays: {
+        Row: Stay;
+        Insert: Partial<Stay> & {
+          user_id: string;
+          city: string;
+          start_date: string;
+          end_date: string;
+        };
+        Update: Partial<Stay>;
         Relationships: [
           {
-            foreignKeyName: 'posts_author_id_fkey';
-            columns: ['author_id'];
+            foreignKeyName: 'stays_user_id_fkey';
+            columns: ['user_id'];
             referencedRelation: 'profiles';
             referencedColumns: ['id'];
           },
         ];
       };
-      likes: {
-        Row: { post_id: string; user_id: string; created_at: string };
-        Insert: { post_id: string; user_id: string };
-        Update: Partial<{ post_id: string; user_id: string }>;
-        Relationships: [];
-      };
-      follows: {
-        Row: { follower_id: string; following_id: string; created_at: string };
-        Insert: { follower_id: string; following_id: string };
-        Update: Partial<{ follower_id: string; following_id: string }>;
-        Relationships: [];
+      connections: {
+        Row: Connection;
+        Insert: Partial<Connection> & { requester_id: string; addressee_id: string };
+        Update: Partial<Connection>;
+        Relationships: [
+          {
+            foreignKeyName: 'connections_requester_id_fkey';
+            columns: ['requester_id'];
+            referencedRelation: 'profiles';
+            referencedColumns: ['id'];
+          },
+          {
+            foreignKeyName: 'connections_addressee_id_fkey';
+            columns: ['addressee_id'];
+            referencedRelation: 'profiles';
+            referencedColumns: ['id'];
+          },
+        ];
       };
     };
     Views: {};

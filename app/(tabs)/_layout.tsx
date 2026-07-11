@@ -19,10 +19,19 @@ export default function TabLayout() {
       <Tabs.Screen
         name="index"
         options={{
-          title: 'Fil',
+          title: 'Trajet',
+          tabBarIcon: ({ color }) => (
+            <SymbolView name={{ ios: 'map.fill', android: 'map', web: 'map' }} tintColor={color} size={26} />
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="crossings"
+        options={{
+          title: 'Croisements',
           tabBarIcon: ({ color }) => (
             <SymbolView
-              name={{ ios: 'house.fill', android: 'home', web: 'home' }}
+              name={{ ios: 'arrow.triangle.2.circlepath', android: 'sync', web: 'sync' }}
               tintColor={color}
               size={26}
             />
@@ -30,15 +39,11 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
-        name="create"
+        name="friends"
         options={{
-          title: 'Publier',
+          title: 'Amis',
           tabBarIcon: ({ color }) => (
-            <SymbolView
-              name={{ ios: 'plus.circle.fill', android: 'add_circle', web: 'add_circle' }}
-              tintColor={color}
-              size={26}
-            />
+            <SymbolView name={{ ios: 'person.2.fill', android: 'people', web: 'people' }} tintColor={color} size={26} />
           ),
         }}
       />
@@ -47,11 +52,7 @@ export default function TabLayout() {
         options={{
           title: 'Profil',
           tabBarIcon: ({ color }) => (
-            <SymbolView
-              name={{ ios: 'person.fill', android: 'person', web: 'person' }}
-              tintColor={color}
-              size={26}
-            />
+            <SymbolView name={{ ios: 'person.fill', android: 'person', web: 'person' }} tintColor={color} size={26} />
           ),
         }}
       />

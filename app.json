@@ -1,21 +1,23 @@
 {
   "expo": {
-    "name": "Communo",
-    "slug": "communo",
+    "name": "Traces",
+    "slug": "traces",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "communo",
+    "scheme": "traces",
     "userInterfaceStyle": "automatic",
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.flavienrousseau.communo",
+      "bundleIdentifier": "com.flavienrousseau.traces",
       "infoPlist": {
-        "NSPhotoLibraryUsageDescription": "Communo a besoin d'accéder à tes photos pour illustrer tes publications."
+        "NSPhotoLibraryUsageDescription": "Traces lit la date et le lieu de tes photos pour reconstituer ton trajet de vie. Les photos elles-mêmes ne sont jamais envoyées sur nos serveurs.",
+        "NSLocationWhenInUseUsageDescription": "Traces utilise la localisation uniquement pour convertir les coordonnées de tes photos en noms de villes."
       }
     },
     "android": {
-      "package": "com.flavienrousseau.communo",
+      "package": "com.flavienrousseau.traces",
+      "permissions": ["ACCESS_MEDIA_LOCATION"],
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
@@ -33,9 +35,17 @@
       "expo-router",
       "expo-secure-store",
       [
-        "expo-image-picker",
+        "expo-media-library",
         {
-          "photosPermission": "Communo a besoin d'accéder à tes photos pour illustrer tes publications."
+          "photosPermission": "Traces lit la date et le lieu de tes photos pour reconstituer ton trajet de vie.",
+          "savePhotosPermission": "Traces n'a pas besoin d'enregistrer de photos.",
+          "isAccessMediaLocationEnabled": true
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Traces utilise la localisation uniquement pour convertir les coordonnées de tes photos en noms de villes."
         }
       ],
       [
