@@ -1,5 +1,5 @@
 import { datesOverlap, haversineDistanceKm, normalizeCityName } from '@/lib/geo';
-import type { NearMissCrossing, OverlapCrossing, Stay } from '@/types/database';
+import type { Crossing, CrossingBase, NearMissCrossing, OverlapCrossing, Stay } from '@/types/database';
 
 // Stays farther apart than this are treated as different places, even if a
 // city-name match wasn't possible. City-level granularity means two people
@@ -84,4 +84,38 @@ export function computeCrossings(
     overlaps: overlaps.slice(0, MAX_RESULTS_PER_KIND),
     nearMisses: nearMisses.slice(0, MAX_RESULTS_PER_KIND),
   };
+}
+
+export type TimelineEntry = { date: string; crossing: Crossing };
+
+/**
+ * Merges overlaps and near-misses into a single chronological timeline
+ * (most recent first), so time proximity is visible at a glance instead of
+ * split across two separate lists.
+ */
+export function buildCrossingTimeline(overlaps: OverlapCrossing[], nearMisses: NearMissCrossing[]): TimelineEntry[] {
+  const entries: TimelineEntry[] = [
+    ...overlaps.map((crossing) => ({ date: crossing.overlapStart, crossing })),
+    ...nearMisses.map((crossing) => ({
+      // Anchor near-misses on the moment the gap started (the end of
+      // whichever stay happened first).
+      date: crossing.myStay.start_date < crossing.friendStay.start_date ? crossing.myStay.end_date : crossing.friendStay.end_date,
+      crossing,
+    })),
+  ];
+
+  return entries.sort((a, b) => (a.date < b.date ? 1 : -1));
+}
+
+export function crossingLocationLabel(crossing: CrossingBase): string {
+  if (crossing.city.toLowerCase() === crossing.friendCity.toLowerCase()) {
+    return crossing.country ? `${crossing.city}, ${crossing.country}` : crossing.city;
+  }
+  return `${crossing.city} ↔ ${crossing.friendCity}`;
+}
+
+export function crossingDistanceLabel(distanceKm: number | null): string | null {
+  if (distanceKm == null) return null;
+  if (distanceKm < 1) return "à moins d'1 km";
+  return `à ${Math.round(distanceKm)} km`;
 }

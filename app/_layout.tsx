@@ -75,6 +75,7 @@ function RootLayoutNav() {
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
         <Stack.Screen name="(auth)" options={{ headerShown: false }} />
         <Stack.Screen name="stay/new" options={{ presentation: 'modal', title: 'Nouveau séjour' }} />
+        <Stack.Screen name="crossing/map" options={{ presentation: 'modal', title: 'Sur la carte' }} />
       </Stack>
     </ThemeProvider>
   );

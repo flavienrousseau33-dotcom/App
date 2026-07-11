@@ -1,31 +1,18 @@
 import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, RefreshControl, ScrollView, StyleSheet } from 'react-native';
 
+import { CrossingTimeline } from '@/components/crossings/CrossingTimeline';
 import { Text, View } from '@/components/Themed';
 import { useAuth } from '@/hooks/useAuth';
-import { computeCrossings } from '@/lib/crossings';
-import { formatDateRange, formatMonthYear } from '@/lib/format';
+import { buildCrossingTimeline, computeCrossings } from '@/lib/crossings';
 import { supabase } from '@/lib/supabase';
-import type { CrossingBase, NearMissCrossing, OverlapCrossing, Profile, Stay } from '@/types/database';
+import type { NearMissCrossing, OverlapCrossing, Profile, Stay } from '@/types/database';
 
 type FriendCrossings = {
   friend: Pick<Profile, 'id' | 'username' | 'display_name'>;
   overlaps: OverlapCrossing[];
   nearMisses: NearMissCrossing[];
 };
-
-function locationLabel(crossing: CrossingBase) {
-  if (crossing.city.toLowerCase() === crossing.friendCity.toLowerCase()) {
-    return crossing.country ? `${crossing.city}, ${crossing.country}` : crossing.city;
-  }
-  return `${crossing.city} ↔ ${crossing.friendCity}`;
-}
-
-function distanceLabel(distanceKm: number | null) {
-  if (distanceKm == null) return null;
-  if (distanceKm < 1) return "à moins d'1 km";
-  return `à ${Math.round(distanceKm)} km`;
-}
 
 export default function CrossingsScreen() {
   const { user } = useAuth();
@@ -102,7 +89,7 @@ export default function CrossingsScreen() {
   return (
     <ScrollView
       style={styles.container}
-      contentContainerStyle={{ padding: 14, gap: 16 }}
+      contentContainerStyle={{ padding: 14, gap: 20 }}
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
     >
       {error ? <Text style={styles.error}>{error}</Text> : null}
@@ -115,42 +102,16 @@ export default function CrossingsScreen() {
           </Text>
         </View>
       ) : (
-        groups.map(({ friend, overlaps, nearMisses }) => (
-          <View key={friend.id} style={styles.friendGroup} lightColor="#fff" darkColor="#1c1c1e">
-            <Text style={styles.friendName}>{friend.display_name || friend.username}</Text>
-
-            {overlaps.length > 0 ? (
-              <View style={styles.section}>
-                <Text style={styles.sectionTitle}>Au même endroit, en même temps</Text>
-                {overlaps.map((crossing, index) => (
-                  <View key={index} style={styles.crossingRow}>
-                    <Text style={styles.crossingCity}>{locationLabel(crossing)}</Text>
-                    <Text style={styles.crossingDetail}>
-                      {formatDateRange(crossing.overlapStart, crossing.overlapEnd)}
-                      {crossing.distanceKm != null ? ` · ${distanceLabel(crossing.distanceKm)}` : ''}
-                    </Text>
-                  </View>
-                ))}
-              </View>
-            ) : null}
-
-            {nearMisses.length > 0 ? (
-              <View style={styles.section}>
-                <Text style={styles.sectionTitle}>Même endroit, dates différentes</Text>
-                {nearMisses.map((crossing, index) => (
-                  <View key={index} style={styles.crossingRow}>
-                    <Text style={styles.crossingCity}>{locationLabel(crossing)}</Text>
-                    <Text style={styles.crossingDetail}>
-                      Toi : {formatMonthYear(crossing.myStay.start_date)} · Eux : {formatMonthYear(crossing.friendStay.start_date)}
-                      {'  '}
-                      (manqué de {crossing.dayGap} jour{crossing.dayGap > 1 ? 's' : ''})
-                    </Text>
-                  </View>
-                ))}
-              </View>
-            ) : null}
-          </View>
-        ))
+        groups.map(({ friend, overlaps, nearMisses }) => {
+          const friendName = friend.display_name || friend.username;
+          const entries = buildCrossingTimeline(overlaps, nearMisses);
+          return (
+            <View key={friend.id} style={styles.friendGroup}>
+              <Text style={styles.friendName}>{friendName}</Text>
+              <CrossingTimeline entries={entries} friendName={friendName} />
+            </View>
+          );
+        })
       )}
     </ScrollView>
   );
@@ -162,11 +123,6 @@ const styles = StyleSheet.create({
   error: { color: '#e33', textAlign: 'center' },
   emptyTitle: { fontSize: 17, fontWeight: '600' },
   emptySubtitle: { opacity: 0.6, textAlign: 'center' },
-  friendGroup: { borderRadius: 14, padding: 14, gap: 14 },
+  friendGroup: { gap: 10 },
   friendName: { fontSize: 17, fontWeight: '700' },
-  section: { gap: 8 },
-  sectionTitle: { fontSize: 12, fontWeight: '700', opacity: 0.5, textTransform: 'uppercase' },
-  crossingRow: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: '#8883', paddingTop: 8, gap: 2 },
-  crossingCity: { fontWeight: '600' },
-  crossingDetail: { opacity: 0.7, fontSize: 13 },
 });
