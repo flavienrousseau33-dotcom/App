@@ -14,15 +14,19 @@ via [EAS Build / Submit](https://docs.expo.dev/eas/).
 - **Le scan des photos est fait sur l'appareil.** Seuls des résumés dérivés (ville, pays, dates de
   début/fin de séjour) sont envoyés à Supabase — jamais les coordonnées GPS brutes, ni les photos
   elles-mêmes.
-- **Un séjour n'est visible que par son propriétaire et par ses connexions acceptées.** Voir
-  `stays` dans `supabase/schema.sql` : la policy RLS n'autorise la lecture qu'à `auth.uid() =
-  user_id` ou à un utilisateur ayant une connexion `accepted` avec lui. Il n'y a aucune découverte
-  libre de croisement avec un inconnu.
+- **Un séjour n'est visible que par son propriétaire, et par une connexion acceptée uniquement
+  si ce séjour est proche géographiquement d'un des siens.** Voir `stays` dans
+  `supabase/schema.sql` (fonction `stays_are_close` + policy RLS) : être ami ne donne pas accès à
+  tout l'historique de localisation de l'autre — seuls les séjours à moins de 150 km (ou dans la
+  même ville si les coordonnées manquent) d'un de tes propres séjours sont renvoyés par la base.
+  Tous les autres restent invisibles, y compris via une requête directe à l'API (pas seulement
+  filtrés côté app). Il n'y a par ailleurs aucune découverte libre de croisement avec un inconnu.
 - **Les croisements ne se calculent qu'entre connexions mutuelles** (modèle "demande d'ami" :
   `connections.status = 'accepted'`), jamais entre deux comptes qui ne se sont pas ajoutés.
 
-Si tu ouvres cette app à d'autres personnes, garde ce principe : ne jamais exposer les séjours
-d'un utilisateur à quelqu'un qu'il n'a pas explicitement accepté.
+Si tu ouvres cette app à d'autres personnes, garde ce principe : ne jamais exposer la localisation
+d'un utilisateur à quelqu'un qu'il n'a pas explicitement accepté, et même entre amis, ne jamais
+exposer plus que les lieux réellement proches.
 
 ## 1. Prérequis
 
@@ -53,6 +57,11 @@ je ne peux pas les créer à ta place.
    EXPO_PUBLIC_SUPABASE_URL=https://xxxx.supabase.co
    EXPO_PUBLIC_SUPABASE_ANON_KEY=xxxx
    ```
+
+> Si tu as déjà exécuté une version précédente de `schema.sql` sur un projet en cours d'usage,
+> ré-exécuter tout le fichier renverra des erreurs "policy already exists" sur les politiques
+> inchangées. Dans ce cas, n'exécute que la partie modifiée depuis ta dernière exécution
+> (repère-la avec `git diff` sur `supabase/schema.sql`).
 
 ## 3. Lancer l'app en local
 

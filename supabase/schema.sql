@@ -127,9 +127,56 @@ create index if not exists stays_city_idx on public.stays (lower(city));
 
 alter table public.stays enable row level security;
 
-create policy "Users can view their own stays or an accepted connection's"
+-- Same proximity rule as lib/crossings.ts's PROXIMITY_KM_THRESHOLD: within
+-- 150km when both stays have coordinates, otherwise same city name. Keep
+-- the two in sync if you ever change one.
+create or replace function public.stays_are_close(
+  lat1 double precision, lng1 double precision, city1 text,
+  lat2 double precision, lng2 double precision, city2 text
+)
+returns boolean
+language sql
+immutable
+as $$
+  select case
+    when lat1 is not null and lng1 is not null and lat2 is not null and lng2 is not null then
+      (
+        2 * 6371 * asin(least(1, sqrt(
+          sin(radians(lat2 - lat1) / 2) ^ 2 +
+          cos(radians(lat1)) * cos(radians(lat2)) * sin(radians(lng2 - lng1) / 2) ^ 2
+        )))
+      ) <= 150
+    else
+      lower(trim(city1)) = lower(trim(city2))
+  end;
+$$;
+
+-- A connection only ever sees a stay of yours that is close to one of
+-- *their own* stays — never your full location history. This is the same
+-- restriction the app applies when computing "Croisements", enforced here
+-- so it can't be bypassed by querying the table directly.
+-- (Superseded a broader "any accepted connection sees all your stays"
+-- policy of the same table — drop it first since Postgres has no
+-- `create or replace policy`.)
+drop policy if exists "Users can view their own stays or an accepted connection's" on public.stays;
+
+create policy "Users can view their own stays or a nearby one from a connection"
   on public.stays for select
-  using (auth.uid() = user_id or public.are_connected(auth.uid(), user_id));
+  using (
+    auth.uid() = user_id
+    or (
+      public.are_connected(auth.uid(), user_id)
+      and exists (
+        select 1
+        from public.stays viewer_stay
+        where viewer_stay.user_id = auth.uid()
+          and public.stays_are_close(
+            viewer_stay.latitude, viewer_stay.longitude, viewer_stay.city,
+            stays.latitude, stays.longitude, stays.city
+          )
+      )
+    )
+  );
 
 create policy "Users can insert their own stays"
   on public.stays for insert
