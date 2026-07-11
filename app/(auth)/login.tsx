@@ -23,7 +23,7 @@ export default function LoginScreen() {
   return (
     <View style={styles.container}>
       <Text style={styles.title}>Bienvenue</Text>
-      <Text style={styles.subtitle}>Connecte-toi pour retrouver ta communauté</Text>
+      <Text style={styles.subtitle}>Connecte-toi pour retracer ton trajet de vie</Text>
 
       <TextInput
         style={styles.input}

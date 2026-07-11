@@ -100,7 +100,7 @@ export default function TimelineScreen() {
           )}
         </Pressable>
         <Link href="/stay/new" asChild>
-          <Pressable style={[styles.secondaryButton, { borderColor: tint }]}>
+          <Pressable style={StyleSheet.flatten([styles.secondaryButton, { borderColor: tint }])}>
             <Text style={[styles.secondaryButtonText, { color: tint }]}>Ajouter un séjour</Text>
           </Pressable>
         </Link>

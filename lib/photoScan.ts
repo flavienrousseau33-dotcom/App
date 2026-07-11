@@ -1,6 +1,3 @@
-import * as Location from 'expo-location';
-import { AssetField, MediaType, Query, requestPermissionsAsync, type Asset } from 'expo-media-library';
-
 import { supabase } from '@/lib/supabase';
 import { clusterPhotoPoints, type GeoPoint } from '@/lib/geo';
 import type { Stay } from '@/types/database';
@@ -23,7 +20,10 @@ export type ScanResult = {
 };
 
 export async function requestPhotoScanPermissions(): Promise<{ granted: boolean; reason?: string }> {
-  const mediaPermission = await requestPermissionsAsync();
+  const MediaLibrary = await import('expo-media-library');
+  const Location = await import('expo-location');
+
+  const mediaPermission = await MediaLibrary.requestPermissionsAsync();
   if (!mediaPermission.granted) {
     return { granted: false, reason: "Accès à la photothèque refusé." };
   }
@@ -41,9 +41,11 @@ export async function requestPhotoScanPermissions(): Promise<{ granted: boolean;
 async function collectGeoTaggedPoints(
   onProgress?: (progress: ScanProgress) => void
 ): Promise<{ points: GeoPoint[]; photosScanned: number }> {
+  const { AssetField, MediaType, Query } = await import('expo-media-library');
+
   onProgress?.({ phase: 'listing', current: 0, total: 0 });
 
-  const assets: Asset[] = await new Query()
+  const assets = await new Query()
     .eq(AssetField.MEDIA_TYPE, MediaType.IMAGE)
     .orderBy({ key: AssetField.CREATION_TIME, ascending: false })
     .limit(MAX_ASSETS_TO_SCAN)
@@ -90,6 +92,8 @@ export async function scanPhotosAndSyncStays(
   userId: string,
   onProgress?: (progress: ScanProgress) => void
 ): Promise<ScanResult> {
+  const Location = await import('expo-location');
+
   const { points, photosScanned } = await collectGeoTaggedPoints(onProgress);
 
   const clusters = clusterPhotoPoints(points);

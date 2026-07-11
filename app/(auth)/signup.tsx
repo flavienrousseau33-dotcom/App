@@ -54,7 +54,7 @@ export default function SignupScreen() {
   return (
     <View style={styles.container}>
       <Text style={styles.title}>Créer un compte</Text>
-      <Text style={styles.subtitle}>Rejoins la communauté</Text>
+      <Text style={styles.subtitle}>Découvre où tes chemins ont croisé ceux de tes amis</Text>
 
       <TextInput
         style={styles.input}
