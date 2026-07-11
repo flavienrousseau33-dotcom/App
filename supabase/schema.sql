@@ -142,3 +142,164 @@ create policy "Users can update their own stays"
 create policy "Users can delete their own stays"
   on public.stays for delete
   using (auth.uid() = user_id);
+
+-- 4. Admin / back office -----------------------------------------------------
+-- Bootstrap the first admin manually from the SQL editor, e.g.:
+--   update public.profiles set is_admin = true where username = 'yourusername';
+alter table public.profiles add column if not exists is_admin boolean not null default false;
+alter table public.profiles add column if not exists is_suspended boolean not null default false;
+
+create or replace function public.is_admin_user()
+returns boolean
+language sql
+security definer set search_path = public
+stable
+as $$
+  select coalesce((select is_admin from public.profiles where id = auth.uid()), false);
+$$;
+
+-- Belt-and-suspenders: even though the app never sends these columns, this
+-- stops a crafted request from the normal "update own profile" policy above
+-- from ever being able to self-grant admin or lift a suspension.
+create or replace function public.protect_admin_columns()
+returns trigger
+language plpgsql
+security definer set search_path = public
+as $$
+begin
+  if not public.is_admin_user() then
+    new.is_admin := old.is_admin;
+    new.is_suspended := old.is_suspended;
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists protect_admin_columns_trigger on public.profiles;
+create trigger protect_admin_columns_trigger
+  before update on public.profiles
+  for each row execute procedure public.protect_admin_columns();
+
+-- Every function below is security definer (so it can see across all users,
+-- bypassing the normal per-user RLS above) and starts by checking
+-- is_admin_user(), which reads the *caller's* session — so only an admin's
+-- own JWT can ever make these do anything. No service-role key is needed
+-- anywhere in the admin web app.
+
+create or replace function public.admin_stats()
+returns json
+language plpgsql
+security definer set search_path = public
+as $$
+declare
+  result json;
+begin
+  if not public.is_admin_user() then
+    raise exception 'not authorized';
+  end if;
+
+  select json_build_object(
+    'total_users', (select count(*) from public.profiles),
+    'new_users_7d', (select count(*) from public.profiles where created_at >= now() - interval '7 days'),
+    'new_users_30d', (select count(*) from public.profiles where created_at >= now() - interval '30 days'),
+    'suspended_users', (select count(*) from public.profiles where is_suspended),
+    'total_stays', (select count(*) from public.stays),
+    'stays_by_source', (
+      select coalesce(json_object_agg(source, cnt), '{}'::json) from (
+        select source, count(*) as cnt from public.stays group by source
+      ) s
+    ),
+    'total_connections_accepted', (select count(*) from public.connections where status = 'accepted'),
+    'total_connections_pending', (select count(*) from public.connections where status = 'pending')
+  ) into result;
+
+  return result;
+end;
+$$;
+
+create or replace function public.admin_list_users(search text default '', limit_count int default 50, offset_count int default 0)
+returns table (
+  id uuid,
+  username text,
+  display_name text,
+  email text,
+  is_admin boolean,
+  is_suspended boolean,
+  stay_count bigint,
+  friend_count bigint,
+  created_at timestamptz
+)
+language plpgsql
+security definer set search_path = public
+as $$
+begin
+  if not public.is_admin_user() then
+    raise exception 'not authorized';
+  end if;
+
+  return query
+    select
+      p.id,
+      p.username,
+      p.display_name,
+      u.email,
+      p.is_admin,
+      p.is_suspended,
+      (select count(*) from public.stays s where s.user_id = p.id),
+      (select count(*) from public.connections c where c.status = 'accepted' and (c.requester_id = p.id or c.addressee_id = p.id)),
+      p.created_at
+    from public.profiles p
+    join auth.users u on u.id = p.id
+    where search = '' or p.username ilike '%' || search || '%' or u.email ilike '%' || search || '%'
+    order by p.created_at desc
+    limit limit_count offset offset_count;
+end;
+$$;
+
+create or replace function public.admin_set_suspended(target_id uuid, suspended boolean)
+returns void
+language plpgsql
+security definer set search_path = public
+as $$
+begin
+  if not public.is_admin_user() then
+    raise exception 'not authorized';
+  end if;
+  if target_id = auth.uid() then
+    raise exception 'cannot suspend yourself';
+  end if;
+
+  update public.profiles set is_suspended = suspended where id = target_id;
+end;
+$$;
+
+create or replace function public.admin_delete_user(target_id uuid)
+returns void
+language plpgsql
+security definer set search_path = public
+as $$
+begin
+  if not public.is_admin_user() then
+    raise exception 'not authorized';
+  end if;
+  if target_id = auth.uid() then
+    raise exception 'cannot delete yourself';
+  end if;
+
+  delete from auth.users where id = target_id;
+end;
+$$;
+
+create or replace function public.admin_delete_stay(target_stay_id uuid)
+returns void
+language plpgsql
+security definer set search_path = public
+as $$
+begin
+  if not public.is_admin_user() then
+    raise exception 'not authorized';
+  end if;
+
+  delete from public.stays where id = target_stay_id;
+end;
+$$;

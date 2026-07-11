@@ -4,6 +4,8 @@ export type Profile = {
   display_name: string | null;
   avatar_url: string | null;
   bio: string | null;
+  is_admin: boolean;
+  is_suspended: boolean;
   created_at: string;
 };
 
@@ -40,15 +42,22 @@ export type ConnectionWithProfiles = Connection & {
   addressee: Pick<Profile, 'id' | 'username' | 'display_name' | 'avatar_url'>;
 };
 
-// Two stays (mine and a friend's) that overlap in both city and time.
-export type Crossing = {
+// Two stays (mine and a friend's) that happened in the same place, either at
+// an overlapping time ("overlap") or at different times ("near-miss").
+// `distanceKm` is null when neither stay has coordinates and the match was
+// made on city name alone.
+export type CrossingBase = {
   city: string;
+  friendCity: string;
   country: string | null;
-  overlapStart: string;
-  overlapEnd: string;
+  distanceKm: number | null;
   myStay: Stay;
   friendStay: Stay;
 };
+
+export type OverlapCrossing = CrossingBase & { kind: 'overlap'; overlapStart: string; overlapEnd: string };
+export type NearMissCrossing = CrossingBase & { kind: 'near-miss'; dayGap: number };
+export type Crossing = OverlapCrossing | NearMissCrossing;
 
 // Minimal typed schema for the Supabase client. Extend as new tables are added.
 export type Database = {

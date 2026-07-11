@@ -1,5 +1,6 @@
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { useRouter } from 'expo-router';
+import * as Location from 'expo-location';
 import { useState } from 'react';
 import { ActivityIndicator, Platform, Pressable, StyleSheet, TextInput } from 'react-native';
 
@@ -42,10 +43,31 @@ export default function NewStayScreen() {
     setError(null);
     setSaving(true);
     try {
+      // Best-effort geocoding so manual stays can also be matched by
+      // distance in "Croisements", not just by exact city name. Not fatal
+      // if it fails — the stay is still saved without coordinates.
+      let latitude: number | null = null;
+      let longitude: number | null = null;
+      try {
+        const permission = await Location.requestForegroundPermissionsAsync();
+        if (permission.status === 'granted') {
+          const query = country.trim() ? `${city.trim()}, ${country.trim()}` : city.trim();
+          const [coords] = await Location.geocodeAsync(query);
+          if (coords) {
+            latitude = coords.latitude;
+            longitude = coords.longitude;
+          }
+        }
+      } catch {
+        // Ignore — geocoding is a nice-to-have here, not a requirement.
+      }
+
       const { error } = await supabase.from('stays').insert({
         user_id: user.id,
         city: city.trim(),
         country: country.trim() || null,
+        latitude,
+        longitude,
         start_date: toIsoDate(startDate),
         end_date: toIsoDate(endDate),
         source: 'manual',

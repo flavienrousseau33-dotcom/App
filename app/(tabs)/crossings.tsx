@@ -4,14 +4,28 @@ import { ActivityIndicator, RefreshControl, ScrollView, StyleSheet } from 'react
 import { Text, View } from '@/components/Themed';
 import { useAuth } from '@/hooks/useAuth';
 import { computeCrossings } from '@/lib/crossings';
-import { formatDateRange } from '@/lib/format';
+import { formatDateRange, formatMonthYear } from '@/lib/format';
 import { supabase } from '@/lib/supabase';
-import type { Crossing, Profile, Stay } from '@/types/database';
+import type { CrossingBase, NearMissCrossing, OverlapCrossing, Profile, Stay } from '@/types/database';
 
 type FriendCrossings = {
   friend: Pick<Profile, 'id' | 'username' | 'display_name'>;
-  crossings: Crossing[];
+  overlaps: OverlapCrossing[];
+  nearMisses: NearMissCrossing[];
 };
+
+function locationLabel(crossing: CrossingBase) {
+  if (crossing.city.toLowerCase() === crossing.friendCity.toLowerCase()) {
+    return crossing.country ? `${crossing.city}, ${crossing.country}` : crossing.city;
+  }
+  return `${crossing.city} ↔ ${crossing.friendCity}`;
+}
+
+function distanceLabel(distanceKm: number | null) {
+  if (distanceKm == null) return null;
+  if (distanceKm < 1) return "à moins d'1 km";
+  return `à ${Math.round(distanceKm)} km`;
+}
 
 export default function CrossingsScreen() {
   const { user } = useAuth();
@@ -57,9 +71,9 @@ export default function CrossingsScreen() {
     const results: FriendCrossings[] = [];
     for (const friend of friends) {
       const { data: friendStays } = await supabase.from('stays').select('*').eq('user_id', friend.id).returns<Stay[]>();
-      const crossings = computeCrossings(myStays ?? [], friendStays ?? []);
-      if (crossings.length > 0) {
-        results.push({ friend, crossings });
+      const { overlaps, nearMisses } = computeCrossings(myStays ?? [], friendStays ?? []);
+      if (overlaps.length > 0 || nearMisses.length > 0) {
+        results.push({ friend, overlaps, nearMisses });
       }
     }
 
@@ -101,18 +115,40 @@ export default function CrossingsScreen() {
           </Text>
         </View>
       ) : (
-        groups.map(({ friend, crossings }) => (
+        groups.map(({ friend, overlaps, nearMisses }) => (
           <View key={friend.id} style={styles.friendGroup} lightColor="#fff" darkColor="#1c1c1e">
             <Text style={styles.friendName}>{friend.display_name || friend.username}</Text>
-            {crossings.map((crossing, index) => (
-              <View key={index} style={styles.crossingRow}>
-                <Text style={styles.crossingCity}>
-                  {crossing.city}
-                  {crossing.country ? `, ${crossing.country}` : ''}
-                </Text>
-                <Text style={styles.crossingDates}>{formatDateRange(crossing.overlapStart, crossing.overlapEnd)}</Text>
+
+            {overlaps.length > 0 ? (
+              <View style={styles.section}>
+                <Text style={styles.sectionTitle}>Au même endroit, en même temps</Text>
+                {overlaps.map((crossing, index) => (
+                  <View key={index} style={styles.crossingRow}>
+                    <Text style={styles.crossingCity}>{locationLabel(crossing)}</Text>
+                    <Text style={styles.crossingDetail}>
+                      {formatDateRange(crossing.overlapStart, crossing.overlapEnd)}
+                      {crossing.distanceKm != null ? ` · ${distanceLabel(crossing.distanceKm)}` : ''}
+                    </Text>
+                  </View>
+                ))}
               </View>
-            ))}
+            ) : null}
+
+            {nearMisses.length > 0 ? (
+              <View style={styles.section}>
+                <Text style={styles.sectionTitle}>Même endroit, dates différentes</Text>
+                {nearMisses.map((crossing, index) => (
+                  <View key={index} style={styles.crossingRow}>
+                    <Text style={styles.crossingCity}>{locationLabel(crossing)}</Text>
+                    <Text style={styles.crossingDetail}>
+                      Toi : {formatMonthYear(crossing.myStay.start_date)} · Eux : {formatMonthYear(crossing.friendStay.start_date)}
+                      {'  '}
+                      (manqué de {crossing.dayGap} jour{crossing.dayGap > 1 ? 's' : ''})
+                    </Text>
+                  </View>
+                ))}
+              </View>
+            ) : null}
           </View>
         ))
       )}
@@ -126,9 +162,11 @@ const styles = StyleSheet.create({
   error: { color: '#e33', textAlign: 'center' },
   emptyTitle: { fontSize: 17, fontWeight: '600' },
   emptySubtitle: { opacity: 0.6, textAlign: 'center' },
-  friendGroup: { borderRadius: 14, padding: 14, gap: 10 },
+  friendGroup: { borderRadius: 14, padding: 14, gap: 14 },
   friendName: { fontSize: 17, fontWeight: '700' },
+  section: { gap: 8 },
+  sectionTitle: { fontSize: 12, fontWeight: '700', opacity: 0.5, textTransform: 'uppercase' },
   crossingRow: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: '#8883', paddingTop: 8, gap: 2 },
   crossingCity: { fontWeight: '600' },
-  crossingDates: { opacity: 0.7 },
+  crossingDetail: { opacity: 0.7, fontSize: 13 },
 });

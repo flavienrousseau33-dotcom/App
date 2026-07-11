@@ -76,9 +76,14 @@ Scanne le QR code avec l'app **Expo Go** (iOS/Android) pour tester instantanéme
   "séjours" (ville + période) → géocodage inverse en ville/pays (voir `lib/geo.ts` et
   `lib/photoScan.ts`) ; ajout manuel d'un séjour (ville, pays, dates)
 - **Amis** : recherche par pseudo, demande de connexion, acceptation/refus, liste des amis
-- **Croisements** : pour chaque ami connecté, calcule et affiche les séjours qui se recoupent en
-  ville et en période (`lib/crossings.ts`)
+- **Croisements** : pour chaque ami connecté, deux listes calculées par `lib/crossings.ts` —
+  celles où vous étiez au même endroit en même temps (triée par distance, la plus proche
+  d'abord), et celles où vous êtes passés au même endroit à des dates différentes (triée par
+  écart de jours, le plus proche d'abord). La distance utilise les coordonnées précises du
+  séjour quand elles existent, avec repli sur le nom de ville sinon.
 - Profil avec statistiques (nombre de séjours, nombre d'amis) et déconnexion
+- Un compte suspendu depuis le back office est automatiquement déconnecté à la prochaine
+  ouverture de l'app.
 
 ## 5. Comment fonctionne le scan de photos
 
@@ -86,7 +91,11 @@ Scanne le QR code avec l'app **Expo Go** (iOS/Android) pour tester instantanéme
    géocodage inverse) puis énumère jusqu'à 1500 photos récentes via `expo-media-library`.
 2. Pour chaque photo, on lit sa date de prise et ses coordonnées GPS (si présentes dans l'EXIF).
 3. `lib/geo.ts` (`clusterPhotoPoints`) regroupe les photos consécutives (par date) qui restent
-   proches géographiquement (< 40 km par défaut) en "clusters" — un cluster = un séjour candidat.
+   proches géographiquement (< 15 km par défaut du centroïde courant du cluster) en "clusters" —
+   un cluster = un séjour candidat. Ce rayon volontairement petit (échelle d'une ville) permet à
+   un même voyage ayant touché plusieurs lieux distincts (deux villes à 20 km l'une de l'autre,
+   par exemple) de produire des séjours séparés et précisément localisés plutôt qu'un centroïde
+   moyen qui ne correspondrait à aucun des deux.
 4. Chaque cluster est converti en ville/pays via la géolocalisation inverse du système
    (`expo-location`, gratuite, sans clé API).
 5. Le résultat (ville, pays, dates, nombre de photos) est synchronisé dans la table `stays` avec
@@ -95,6 +104,10 @@ Scanne le QR code avec l'app **Expo Go** (iOS/Android) pour tester instantanéme
 Limite connue pour la v1 : le scan lit jusqu'à 1500 photos et fait un appel natif par photo pour
 la localisation, ce qui peut prendre du temps sur une grosse photothèque — acceptable pour un
 premier jet, à optimiser plus tard (cache incrémental, ne scanner que les nouvelles photos).
+
+Un séjour ajouté manuellement (`app/stay/new.tsx`) est lui aussi géocodé (ville → coordonnées,
+via `expo-location`) au moment de l'enregistrement, pour qu'il participe au calcul de distance
+dans "Croisements" au même titre qu'un séjour détecté depuis les photos.
 
 ## 6. Feuille de route (pas encore implémenté)
 
@@ -163,6 +176,52 @@ Les délais de revue sont généralement de quelques heures à 1-2 jours (Apple)
 heures à 1 jour (Google), hors premier envoi qui peut être plus long. Une app qui traite des
 données de localisation peut faire l'objet d'un examen plus approfondi.
 
+## 10. Back office (admin)
+
+Un site web séparé (`admin/`), indépendant de l'app mobile — jamais soumis à l'App Store /
+Play Store, se déploie et se met à jour instantanément. Il permet de suivre les statistiques
+clés de la plateforme et de modérer les comptes (suspendre, supprimer).
+
+**Sécurité : aucune clé secrète n'est nécessaire côté back office.** Toutes les actions
+privilégiées (stats globales, suspension, suppression) passent par des fonctions SQL
+`security definer` (`supabase/schema.sql`, section 4) qui vérifient elles-mêmes, côté base de
+données, que l'appelant est un administrateur (`profiles.is_admin`) avant d'agir. Le back office
+n'utilise que la clé publique `anon`, exactement comme l'app mobile — la clé `service_role` ne
+doit jamais être placée dans une app qui tourne dans un navigateur.
+
+### Créer le premier compte admin
+
+Un compte devient admin uniquement via une commande SQL manuelle (aucune inscription ne peut se
+donner ce rôle elle-même) :
+
+```sql
+update public.profiles set is_admin = true where username = 'tonpseudo';
+```
+
+### Lancer le back office en local
+
+```bash
+cd admin
+npm install
+cp .env.example .env   # renseigne VITE_SUPABASE_URL et VITE_SUPABASE_ANON_KEY (même projet Supabase)
+npm run dev
+```
+
+### Déployer le back office
+
+C'est une app Vite statique ordinaire : `npm run build` dans `admin/` produit `admin/dist/`,
+déployable sur Vercel, Netlify, Cloudflare Pages, etc. — indépendamment de l'app mobile.
+Renseigne les mêmes variables d'environnement (`VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`)
+dans la configuration de l'hébergeur.
+
+### Fonctionnalités actuelles
+
+- **Statistiques** : utilisateurs totaux, nouveaux (7j/30j), comptes suspendus, séjours totaux
+  (et par source), connexions acceptées/en attente.
+- **Utilisateurs** : recherche par pseudo/email, suspendre/réactiver un compte, supprimer un
+  compte (cascade sur ses séjours et connexions). Un admin ne peut pas s'auto-suspendre ni
+  s'auto-supprimer.
+
 ## Structure du projet
 
 ```
@@ -174,8 +233,12 @@ lib/geo.ts        clustering géographique des photos + calcul de recoupement de
 lib/photoScan.ts  orchestration du scan de la photothèque + sync Supabase
 lib/crossings.ts  calcul des croisements entre mes séjours et ceux d'un ami
 lib/format.ts     formatage des dates en français
-hooks/useAuth.tsx contexte d'authentification Supabase
+hooks/useAuth.tsx contexte d'authentification Supabase (bloque aussi les comptes suspendus)
 lib/supabase.ts   client Supabase
-supabase/schema.sql  schéma SQL (profiles, stays, connections) à exécuter dans Supabase
+supabase/schema.sql  schéma SQL (profiles, stays, connections, fonctions admin) à exécuter dans Supabase
 types/database.ts    types TypeScript partagés
+
+admin/             back office web séparé (Vite + React), voir section 10
+  src/pages/       Login, Dashboard, Users
+  src/hooks/useAdminAuth.ts  vérifie profiles.is_admin après connexion
 ```

@@ -6,7 +6,7 @@ import { Text, View } from '@/components/Themed';
 import { useAuth } from '@/hooks/useAuth';
 
 export default function LoginScreen() {
-  const { signIn } = useAuth();
+  const { signIn, suspended } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -41,6 +41,9 @@ export default function LoginScreen() {
         onChangeText={setPassword}
       />
 
+      {suspended ? (
+        <Text style={styles.error}>Ton compte a été suspendu. Contacte le support si tu penses que c'est une erreur.</Text>
+      ) : null}
       {error ? <Text style={styles.error}>{error}</Text> : null}
 
       <Pressable style={styles.button} onPress={handleSubmit} disabled={loading}>

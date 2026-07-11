@@ -32,50 +32,68 @@ function toIsoDate(timestampMs: number): string {
 
 /**
  * Groups geotagged photos into "stays": runs of consecutive (by time) photos
- * that stay within `maxDistanceKm` of the previous photo and don't have a
- * gap larger than `maxGapDays`. Each cluster becomes one candidate stay,
- * later reverse-geocoded to a city.
+ * that stay within `maxDistanceKm` of the *running centroid* of the current
+ * cluster (not just the previous photo, which would let a cluster slowly
+ * drift across a whole region one small hop at a time) and don't have a gap
+ * larger than `maxGapDays`. Each cluster becomes one candidate stay, later
+ * reverse-geocoded to a city.
+ *
+ * The default radius is kept small (city-scale) on purpose: a single trip
+ * that touches several distinct nearby places (e.g. two towns 20km apart)
+ * should produce separate, precisely-located stays rather than being
+ * averaged into one centroid that matches neither place.
  */
 export function clusterPhotoPoints(
   points: GeoPoint[],
   options: { maxDistanceKm?: number; maxGapDays?: number } = {}
 ): PhotoCluster[] {
-  const { maxDistanceKm = 40, maxGapDays = 10 } = options;
+  const { maxDistanceKm = 15, maxGapDays = 10 } = options;
   const sorted = [...points].sort((a, b) => a.timestamp - b.timestamp);
 
   const clusters: PhotoCluster[] = [];
   let current: GeoPoint[] = [];
+  let centroid: GeoPoint | null = null;
 
   const flush = () => {
     if (current.length === 0) return;
-    const latitude = current.reduce((sum, p) => sum + p.latitude, 0) / current.length;
-    const longitude = current.reduce((sum, p) => sum + p.longitude, 0) / current.length;
     const timestamps = current.map((p) => p.timestamp);
     clusters.push({
       startDate: toIsoDate(Math.min(...timestamps)),
       endDate: toIsoDate(Math.max(...timestamps)),
-      latitude,
-      longitude,
+      latitude: centroid!.latitude,
+      longitude: centroid!.longitude,
       photoCount: current.length,
     });
     current = [];
+    centroid = null;
+  };
+
+  const updateCentroid = () => {
+    centroid = {
+      timestamp: 0,
+      latitude: current.reduce((sum, p) => sum + p.latitude, 0) / current.length,
+      longitude: current.reduce((sum, p) => sum + p.longitude, 0) / current.length,
+    };
   };
 
   for (const point of sorted) {
     if (current.length === 0) {
       current.push(point);
+      updateCentroid();
       continue;
     }
 
     const last = current[current.length - 1];
-    const distanceKm = haversineDistanceKm(last, point);
+    const distanceKm = haversineDistanceKm(centroid!, point);
     const gapDays = (point.timestamp - last.timestamp) / (1000 * 60 * 60 * 24);
 
     if (distanceKm <= maxDistanceKm && gapDays <= maxGapDays) {
       current.push(point);
+      updateCentroid();
     } else {
       flush();
       current.push(point);
+      updateCentroid();
     }
   }
   flush();
