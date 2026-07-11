@@ -46,7 +46,14 @@ export default function CrossingsScreen() {
       return;
     }
 
-    const { data: myStays, error: staysError } = await supabase.from('stays').select('*').eq('user_id', user.id).returns<Stay[]>();
+    // Exclude my own hidden stays too — a hidden place (e.g. home) should
+    // never surface in a crossing, not even matched against a friend's stay.
+    const { data: myStays, error: staysError } = await supabase
+      .from('stays')
+      .select('*')
+      .eq('user_id', user.id)
+      .eq('is_hidden', false)
+      .returns<Stay[]>();
 
     if (staysError) {
       setError(staysError.message);

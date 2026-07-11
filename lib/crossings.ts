@@ -2,10 +2,9 @@ import { datesOverlap, haversineDistanceKm, normalizeCityName } from '@/lib/geo'
 import type { Crossing, CrossingBase, NearMissCrossing, OverlapCrossing, Stay } from '@/types/database';
 
 // Stays farther apart than this are treated as different places, even if a
-// city-name match wasn't possible. City-level granularity means two people
-// a short drive apart plausibly crossed paths; two different metro areas did
-// not.
-const PROXIMITY_KM_THRESHOLD = 150;
+// city-name match wasn't possible. Kept in sync with stays_are_close() in
+// supabase/schema.sql, which enforces the same radius at the database level.
+const PROXIMITY_KM_THRESHOLD = 20;
 const MAX_RESULTS_PER_KIND = 15;
 
 function distanceBetween(a: Stay, b: Stay): number | null {

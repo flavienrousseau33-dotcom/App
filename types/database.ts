@@ -23,6 +23,7 @@ export type Stay = {
   end_date: string; // ISO date (YYYY-MM-DD)
   source: StaySource;
   photo_count: number | null;
+  is_hidden: boolean;
   created_at: string;
 };
 

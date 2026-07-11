@@ -17,16 +17,23 @@ via [EAS Build / Submit](https://docs.expo.dev/eas/).
 - **Un séjour n'est visible que par son propriétaire, et par une connexion acceptée uniquement
   si ce séjour est proche géographiquement d'un des siens.** Voir `stays` dans
   `supabase/schema.sql` (fonction `stays_are_close` + policy RLS) : être ami ne donne pas accès à
-  tout l'historique de localisation de l'autre — seuls les séjours à moins de 150 km (ou dans la
+  tout l'historique de localisation de l'autre — seuls les séjours à moins de 20 km (ou dans la
   même ville si les coordonnées manquent) d'un de tes propres séjours sont renvoyés par la base.
   Tous les autres restent invisibles, y compris via une requête directe à l'API (pas seulement
   filtrés côté app). Il n'y a par ailleurs aucune découverte libre de croisement avec un inconnu.
 - **Les croisements ne se calculent qu'entre connexions mutuelles** (modèle "demande d'ami" :
   `connections.status = 'accepted'`), jamais entre deux comptes qui ne se sont pas ajoutés.
+- **Un séjour peut être masqué manuellement** (`stays.is_hidden`) : une fois masqué, il devient
+  invisible pour toute connexion, quelle que soit la distance — utile pour ton domicile ou ton
+  travail. Ça n'affecte jamais ta propre vue de tes propres séjours. L'app **suggère** de masquer
+  les lieux où tu es retourné·e 3 fois ou plus (`lib/homeDetection.ts`) — un bon indice de
+  domicile/travail/famille plutôt qu'un simple voyage — mais ne masque jamais rien
+  automatiquement : tu acceptes ou ignores chaque suggestion.
 
 Si tu ouvres cette app à d'autres personnes, garde ce principe : ne jamais exposer la localisation
 d'un utilisateur à quelqu'un qu'il n'a pas explicitement accepté, et même entre amis, ne jamais
-exposer plus que les lieux réellement proches.
+exposer plus que les lieux réellement proches — ni les lieux que la personne a explicitement
+masqués.
 
 ## 1. Prérequis
 
@@ -90,6 +97,10 @@ Scanne le QR code avec l'app **Expo Go** (iOS/Android) pour tester instantanéme
   d'abord), et celles où vous êtes passés au même endroit à des dates différentes (triée par
   écart de jours, le plus proche d'abord). La distance utilise les coordonnées précises du
   séjour quand elles existent, avec repli sur le nom de ville sinon.
+- **Lieux masqués** : chaque séjour peut être masqué manuellement pour tes amis (bouton "Masquer
+  ce lieu" dans Mon trajet). L'app suggère aussi de masquer les lieux visités 3 fois ou plus
+  (probable domicile/travail/famille) sans jamais le faire automatiquement — tu acceptes ou
+  ignores chaque suggestion (`lib/homeDetection.ts`, écran Mon trajet).
 - Profil avec statistiques (nombre de séjours, nombre d'amis) et déconnexion
 - Un compte suspendu depuis le back office est automatiquement déconnecté à la prochaine
   ouverture de l'app.
@@ -116,7 +127,11 @@ premier jet, à optimiser plus tard (cache incrémental, ne scanner que les nouv
 
 Un séjour ajouté manuellement (`app/stay/new.tsx`) est lui aussi géocodé (ville → coordonnées,
 via `expo-location`) au moment de l'enregistrement, pour qu'il participe au calcul de distance
-dans "Croisements" au même titre qu'un séjour détecté depuis les photos.
+dans "Croisements" au même titre qu'un séjour détecté depuis les photos. Si ce géocodage initial
+échoue (ville ambiguë, réseau indisponible…), `lib/backfillCoordinates.ts` réessaie
+automatiquement et silencieusement à chaque ouverture de l'écran Mon trajet, jusqu'à ce que les
+coordonnées soient trouvées — un séjour ne reste jamais durablement sans coordonnées si ça peut
+être évité.
 
 ## 6. Feuille de route (pas encore implémenté)
 

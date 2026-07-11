@@ -118,9 +118,16 @@ create table if not exists public.stays (
   end_date date not null,
   source text not null default 'manual' check (source in ('manual', 'photos', 'strava', 'instagram')),
   photo_count integer,
+  -- Hidden from connections entirely, regardless of proximity. Set manually
+  -- by the owner (the app suggests hiding places visited 3+ times — likely
+  -- home/work/family — but never sets this on its own). Never affects the
+  -- owner's own view of their own stays.
+  is_hidden boolean not null default false,
   created_at timestamptz not null default now(),
   check (end_date >= start_date)
 );
+
+alter table public.stays add column if not exists is_hidden boolean not null default false;
 
 create index if not exists stays_user_idx on public.stays (user_id, start_date);
 create index if not exists stays_city_idx on public.stays (lower(city));
@@ -128,7 +135,7 @@ create index if not exists stays_city_idx on public.stays (lower(city));
 alter table public.stays enable row level security;
 
 -- Same proximity rule as lib/crossings.ts's PROXIMITY_KM_THRESHOLD: within
--- 150km when both stays have coordinates, otherwise same city name. Keep
+-- 20km when both stays have coordinates, otherwise same city name. Keep
 -- the two in sync if you ever change one.
 create or replace function public.stays_are_close(
   lat1 double precision, lng1 double precision, city1 text,
@@ -145,31 +152,35 @@ as $$
           sin(radians(lat2 - lat1) / 2) ^ 2 +
           cos(radians(lat1)) * cos(radians(lat2)) * sin(radians(lng2 - lng1) / 2) ^ 2
         )))
-      ) <= 150
+      ) <= 20
     else
       lower(trim(city1)) = lower(trim(city2))
   end;
 $$;
 
--- A connection only ever sees a stay of yours that is close to one of
--- *their own* stays — never your full location history. This is the same
--- restriction the app applies when computing "Croisements", enforced here
--- so it can't be bypassed by querying the table directly.
+-- A connection only ever sees a stay of yours that is (a) not hidden and
+-- (b) close to one of *their own* non-hidden stays — never your full
+-- location history. This is the same restriction the app applies when
+-- computing "Croisements", enforced here so it can't be bypassed by
+-- querying the table directly.
 -- (Superseded a broader "any accepted connection sees all your stays"
 -- policy of the same table — drop it first since Postgres has no
 -- `create or replace policy`.)
 drop policy if exists "Users can view their own stays or an accepted connection's" on public.stays;
+drop policy if exists "Users can view their own stays or a nearby one from a connection" on public.stays;
 
-create policy "Users can view their own stays or a nearby one from a connection"
+create policy "Users can view their own stays or a nearby non-hidden one from a connection"
   on public.stays for select
   using (
     auth.uid() = user_id
     or (
-      public.are_connected(auth.uid(), user_id)
+      not is_hidden
+      and public.are_connected(auth.uid(), user_id)
       and exists (
         select 1
         from public.stays viewer_stay
         where viewer_stay.user_id = auth.uid()
+          and not viewer_stay.is_hidden
           and public.stays_are_close(
             viewer_stay.latitude, viewer_stay.longitude, viewer_stay.city,
             stays.latitude, stays.longitude, stays.city
