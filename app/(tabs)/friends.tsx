@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, TextInput } from 'react-native';
 
+import { Avatar } from '@/components/Avatar';
 import { Text, View } from '@/components/Themed';
 import Colors from '@/constants/Colors';
 import { useColorScheme } from '@/components/useColorScheme';
@@ -131,7 +132,10 @@ export default function FriendsScreen() {
               const existing = connectionStatusFor(profile.id);
               return (
                 <View key={profile.id} style={styles.row} lightColor="#fff" darkColor="#1c1c1e">
-                  <Text style={styles.name}>{profile.display_name || profile.username}</Text>
+                  <View style={styles.nameRow}>
+                    <Avatar uri={profile.avatar_url} name={profile.display_name || profile.username} size={32} />
+                    <Text style={styles.name}>{profile.display_name || profile.username}</Text>
+                  </View>
                   {!existing ? (
                     <Pressable style={[styles.smallButton, { backgroundColor: tint }]} onPress={() => sendRequest(profile.id)}>
                       <Text style={styles.smallButtonText}>Ajouter</Text>
@@ -152,7 +156,10 @@ export default function FriendsScreen() {
           <Section title="Demandes reçues">
             {incoming.map((c) => (
               <View key={c.id} style={styles.row} lightColor="#fff" darkColor="#1c1c1e">
-                <Text style={styles.name}>{c.requester.display_name || c.requester.username}</Text>
+                <View style={styles.nameRow}>
+                  <Avatar uri={c.requester.avatar_url} name={c.requester.display_name || c.requester.username} size={32} />
+                  <Text style={styles.name}>{c.requester.display_name || c.requester.username}</Text>
+                </View>
                 <View style={{ flexDirection: 'row', gap: 8 }}>
                   <Pressable style={[styles.smallButton, { backgroundColor: tint }]} onPress={() => respond(c.id, 'accepted')}>
                     <Text style={styles.smallButtonText}>Accepter</Text>
@@ -170,7 +177,10 @@ export default function FriendsScreen() {
           <Section title="Demandes envoyées">
             {outgoing.map((c) => (
               <View key={c.id} style={styles.row} lightColor="#fff" darkColor="#1c1c1e">
-                <Text style={styles.name}>{c.addressee.display_name || c.addressee.username}</Text>
+                <View style={styles.nameRow}>
+                  <Avatar uri={c.addressee.avatar_url} name={c.addressee.display_name || c.addressee.username} size={32} />
+                  <Text style={styles.name}>{c.addressee.display_name || c.addressee.username}</Text>
+                </View>
                 <Pressable style={styles.smallOutlineButton} onPress={() => remove(c.id)}>
                   <Text>Annuler</Text>
                 </Pressable>
@@ -183,7 +193,10 @@ export default function FriendsScreen() {
           {friends.length === 0 ? <Text style={styles.emptyText}>Pas encore d'amis. Cherche un pseudo ci-dessus.</Text> : null}
           {friends.map(({ connectionId, profile }) => (
             <View key={connectionId} style={styles.row} lightColor="#fff" darkColor="#1c1c1e">
-              <Text style={styles.name}>{profile.display_name || profile.username}</Text>
+              <View style={styles.nameRow}>
+                <Avatar uri={profile.avatar_url} name={profile.display_name || profile.username} size={32} />
+                <Text style={styles.name}>{profile.display_name || profile.username}</Text>
+              </View>
               <Pressable style={styles.smallOutlineButton} onPress={() => remove(connectionId)}>
                 <Text>Retirer</Text>
               </Pressable>
@@ -224,6 +237,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     padding: 12,
   },
+  nameRow: { flexDirection: 'row', alignItems: 'center', gap: 10, flexShrink: 1 },
   name: { fontWeight: '600', flexShrink: 1 },
   smallButton: { borderRadius: 8, paddingVertical: 8, paddingHorizontal: 12 },
   smallButtonText: { color: '#fff', fontWeight: '700', fontSize: 13 },

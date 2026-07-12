@@ -1046,3 +1046,32 @@ drop policy if exists "Uploader can delete their thread photo" on storage.object
 create policy "Uploader can delete their thread photo"
   on storage.objects for delete
   using (bucket_id = 'thread-photos' and owner = auth.uid());
+
+-- 7. Profile pictures -------------------------------------------------------
+-- Public bucket: profiles.avatar_url is already public by design (see
+-- section 1 — usernames/avatars must be visible to anyone for search and
+-- connection requests), so unlike thread photos this needs no membership
+-- check, only "you can only write to your own folder."
+insert into storage.buckets (id, name, public)
+values ('avatars', 'avatars', true)
+on conflict (id) do nothing;
+
+drop policy if exists "Avatars are publicly readable" on storage.objects;
+create policy "Avatars are publicly readable"
+  on storage.objects for select
+  using (bucket_id = 'avatars');
+
+drop policy if exists "Users can upload their own avatar" on storage.objects;
+create policy "Users can upload their own avatar"
+  on storage.objects for insert
+  with check (bucket_id = 'avatars' and (storage.foldername(name))[1] = auth.uid()::text);
+
+drop policy if exists "Users can replace their own avatar" on storage.objects;
+create policy "Users can replace their own avatar"
+  on storage.objects for update
+  using (bucket_id = 'avatars' and (storage.foldername(name))[1] = auth.uid()::text);
+
+drop policy if exists "Users can delete their own avatar" on storage.objects;
+create policy "Users can delete their own avatar"
+  on storage.objects for delete
+  using (bucket_id = 'avatars' and (storage.foldername(name))[1] = auth.uid()::text);

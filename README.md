@@ -105,6 +105,9 @@ Scanne le QR code avec l'app **Expo Go** (iOS/Android) pour tester instantanéme
   `lib/homeDetection.ts`), chacun avec un interrupteur visible/masqué (`lib/savedPlaces.ts`
   synchronise l'état vers les séjours concernés). Chaque séjour a aussi son propre bouton
   "Masquer ce lieu" dans Mon trajet, indépendamment des lieux déclarés.
+- **Photo de profil** : modifiable depuis l'onglet Profil (choix dans la photothèque), affichée
+  aussi dans Amis et dans les fils de croisement. Sans photo, un avatar coloré à l'initiale du nom
+  est utilisé partout à la place (`components/Avatar.tsx`).
 - Profil avec statistiques (nombre de séjours, nombre d'amis) et déconnexion
 - Un compte suspendu depuis le back office est automatiquement déconnecté à la prochaine
   ouverture de l'app.
@@ -321,6 +324,22 @@ peuvent aimer, commenter et partager une photo autour de ce moment précis.
 - **J'aime et commentaires** passent par de simples policies RLS (poster/supprimer sa propre
   ligne), puisque ça ne révèle jamais l'identité de quelqu'un d'autre.
 
+## 13. Photo de profil
+
+`profiles.avatar_url` existait déjà dans le schéma mais n'était encore relié à rien — il n'y avait
+aucun moyen de le renseigner. Contrairement aux photos de fil de croisement, un avatar est public
+par nature (les profils sont déjà publics pour permettre la recherche par pseudo), donc :
+
+- **Bucket Storage public** (`avatars`, `supabase/schema.sql` section 7) : lecture ouverte à tous,
+  écriture limitée à son propre dossier (`{user_id}/...`) via policy RLS sur `storage.objects`.
+- Chemin fixe par utilisateur (`{user_id}/avatar.{ext}`) : changer sa photo remplace l'ancienne au
+  lieu d'en accumuler, `lib/profile.ts` (`uploadAvatar`/`removeAvatar`) gère l'upload et met à jour
+  `profiles.avatar_url` (avec un paramètre anti-cache pour éviter de continuer à voir l'ancienne
+  photo après un remplacement).
+- `components/Avatar.tsx` : composant réutilisé partout où une identité peut s'afficher (Profil,
+  Amis, participants d'un fil de croisement) — image si `avatar_url` existe, sinon un rond coloré à
+  l'initiale du nom (couleur dérivée du nom, stable dans le temps).
+
 ## Structure du projet
 
 ```
@@ -334,10 +353,12 @@ app/
   crossing/thread.tsx  fil d'un croisement : j'aime, commentaires, photos (modal)
 components/NotificationBellButton.tsx  icône cloche + badge non-lus, dans le header
 components/SettingsGearButton.tsx  icône roue crantée, dans le header
+components/Avatar.tsx  photo de profil ou rond coloré à l'initiale, réutilisé partout
 lib/geo.ts        clustering géographique des photos + calcul de recoupement de dates
 lib/photoScan.ts  orchestration du scan de la photothèque + sync Supabase
 lib/crossings.ts  calcul des croisements entre mes séjours et ceux d'un ami
 lib/threads.ts    appels RPC/Storage pour le fil d'un croisement
+lib/profile.ts    upload/suppression de la photo de profil
 lib/homeDetection.ts     détection des lieux visités 3 fois ou plus
 lib/savedPlaces.ts       synchronise Maison/Travail/Lieux fréquents vers stays.is_hidden
 lib/backfillCoordinates.ts  regéocode les séjours manuels sans coordonnées

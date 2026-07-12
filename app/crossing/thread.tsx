@@ -5,6 +5,7 @@ import { SymbolView } from 'expo-symbols';
 import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, FlatList, Pressable, ScrollView, StyleSheet, TextInput } from 'react-native';
 
+import { Avatar } from '@/components/Avatar';
 import { Text, View } from '@/components/Themed';
 import Colors from '@/constants/Colors';
 import { useColorScheme } from '@/components/useColorScheme';
@@ -153,7 +154,7 @@ export default function CrossingThreadScreen() {
         <View style={styles.participants}>
           {overview.participants.map((participant) => (
             <View key={participant.user_id} style={styles.participantChip} lightColor="#f2f2f5" darkColor="#1c1c1e">
-              <View style={[styles.avatarDot, !participant.is_friend && !participant.is_you ? styles.avatarDotAnon : null]} />
+              <Avatar uri={participant.avatar_url} name={participant.display_name} size={22} />
               <Text style={styles.participantName}>
                 {participant.is_you ? 'Toi' : participant.display_name}
               </Text>
@@ -247,8 +248,6 @@ const styles = StyleSheet.create({
   sectionHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 },
   participants: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8 },
   participantChip: { flexDirection: 'row', alignItems: 'center', gap: 6, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6 },
-  avatarDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#3aa66b' },
-  avatarDotAnon: { backgroundColor: '#9299a3' },
   participantName: { fontSize: 13, fontWeight: '600' },
   likeRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   likeCount: { fontSize: 14, fontWeight: '600' },

@@ -1,9 +1,11 @@
-import { Image } from 'expo-image';
+import * as ImagePicker from 'expo-image-picker';
 import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet } from 'react-native';
 
+import { Avatar } from '@/components/Avatar';
 import { Text, View } from '@/components/Themed';
 import { useAuth } from '@/hooks/useAuth';
+import { removeAvatar, uploadAvatar } from '@/lib/profile';
 import { supabase } from '@/lib/supabase';
 import type { Profile } from '@/types/database';
 
@@ -13,6 +15,8 @@ export default function ProfileScreen() {
   const [stayCount, setStayCount] = useState(0);
   const [friendCount, setFriendCount] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [savingAvatar, setSavingAvatar] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!user) return;
@@ -37,6 +41,45 @@ export default function ProfileScreen() {
     load().finally(() => setLoading(false));
   }, [load]);
 
+  async function handleChangeAvatar() {
+    if (!user || savingAvatar) return;
+    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!permission.granted) return;
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      quality: 0.7,
+      allowsEditing: true,
+      aspect: [1, 1],
+    });
+    if (result.canceled || !result.assets[0]) return;
+
+    setSavingAvatar(true);
+    setError(null);
+    try {
+      const avatarUrl = await uploadAvatar(user.id, result.assets[0].uri);
+      setProfile((prev) => (prev ? { ...prev, avatar_url: avatarUrl } : prev));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Impossible de changer la photo de profil.");
+    } finally {
+      setSavingAvatar(false);
+    }
+  }
+
+  async function handleRemoveAvatar() {
+    if (!user || !profile?.avatar_url || savingAvatar) return;
+    setSavingAvatar(true);
+    setError(null);
+    try {
+      await removeAvatar(user.id, profile.avatar_url);
+      setProfile((prev) => (prev ? { ...prev, avatar_url: null } : prev));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Impossible de retirer la photo de profil.');
+    } finally {
+      setSavingAvatar(false);
+    }
+  }
+
   if (loading) {
     return (
       <View style={styles.center}>
@@ -47,11 +90,25 @@ export default function ProfileScreen() {
 
   return (
     <View style={styles.container}>
-      <Image
-        source={profile?.avatar_url ? { uri: profile.avatar_url } : undefined}
-        style={styles.avatar}
-        contentFit="cover"
-      />
+      <Pressable onPress={handleChangeAvatar} disabled={savingAvatar} style={styles.avatarWrap}>
+        <Avatar uri={profile?.avatar_url ?? null} name={profile?.display_name || profile?.username || '?'} size={84} />
+        {savingAvatar ? (
+          <View style={styles.avatarOverlay}>
+            <ActivityIndicator color="#fff" />
+          </View>
+        ) : null}
+      </Pressable>
+      <Pressable onPress={handleChangeAvatar} disabled={savingAvatar}>
+        <Text style={styles.changePhotoLink}>Changer la photo</Text>
+      </Pressable>
+      {profile?.avatar_url ? (
+        <Pressable onPress={handleRemoveAvatar} disabled={savingAvatar}>
+          <Text style={styles.removePhotoLink}>Retirer la photo</Text>
+        </Pressable>
+      ) : null}
+
+      {error ? <Text style={styles.error}>{error}</Text> : null}
+
       <Text style={styles.displayName}>{profile?.display_name || profile?.username}</Text>
       <Text style={styles.username}>@{profile?.username}</Text>
       {profile?.bio ? <Text style={styles.bio}>{profile.bio}</Text> : null}
@@ -77,8 +134,22 @@ export default function ProfileScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, alignItems: 'center', paddingTop: 40, paddingHorizontal: 16, gap: 4 },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  avatar: { width: 84, height: 84, borderRadius: 42, backgroundColor: '#ccc', marginBottom: 8 },
-  displayName: { fontSize: 20, fontWeight: '700' },
+  avatarWrap: { marginBottom: 4 },
+  avatarOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    borderRadius: 42,
+    backgroundColor: '#0007',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  changePhotoLink: { color: '#2f95dc', fontWeight: '600', fontSize: 13, marginTop: 8 },
+  removePhotoLink: { color: '#e33', fontWeight: '600', fontSize: 13, marginTop: 6 },
+  error: { color: '#e33', marginTop: 8, textAlign: 'center' },
+  displayName: { fontSize: 20, fontWeight: '700', marginTop: 16 },
   username: { opacity: 0.5 },
   bio: { textAlign: 'center', marginTop: 8 },
   statsRow: { flexDirection: 'row', gap: 32, marginTop: 24 },
