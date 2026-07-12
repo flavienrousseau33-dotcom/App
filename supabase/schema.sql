@@ -404,3 +404,176 @@ begin
   delete from public.stays where id = target_stay_id;
 end;
 $$;
+
+-- 5. Notifications ------------------------------------------------------------
+-- The in-app notification center. Rows are only ever created server-side
+-- (the trigger and function below) — never directly by a client — so their
+-- content can't be spoofed.
+create table if not exists public.notifications (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.profiles (id) on delete cascade,
+  type text not null check (type in ('crossing_overlap', 'crossing_near_miss', 'friend_request', 'friend_accepted')),
+  title text not null,
+  body text not null,
+  data jsonb,
+  is_read boolean not null default false,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists notifications_user_idx on public.notifications (user_id, created_at desc);
+
+alter table public.notifications enable row level security;
+
+create policy "Users can view their own notifications"
+  on public.notifications for select
+  using (auth.uid() = user_id);
+
+create policy "Users can mark their own notifications as read"
+  on public.notifications for update
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
+
+-- 5a. Friend request / acceptance notifications --------------------------
+create or replace function public.notify_connection_change()
+returns trigger
+language plpgsql
+security definer set search_path = public
+as $$
+declare
+  requester_name text;
+  addressee_name text;
+begin
+  if (tg_op = 'INSERT') then
+    select coalesce(display_name, username) into requester_name from public.profiles where id = new.requester_id;
+    insert into public.notifications (user_id, type, title, body, data)
+    values (
+      new.addressee_id,
+      'friend_request',
+      'Nouvelle demande de connexion',
+      requester_name || ' souhaite se connecter avec toi.',
+      jsonb_build_object('connection_id', new.id, 'requester_id', new.requester_id)
+    );
+  elsif (tg_op = 'UPDATE' and old.status = 'pending' and new.status = 'accepted') then
+    select coalesce(display_name, username) into addressee_name from public.profiles where id = new.addressee_id;
+    insert into public.notifications (user_id, type, title, body, data)
+    values (
+      new.requester_id,
+      'friend_accepted',
+      'Demande acceptée',
+      addressee_name || ' a accepté ta demande de connexion.',
+      jsonb_build_object('connection_id', new.id, 'addressee_id', new.addressee_id)
+    );
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists on_connection_change on public.connections;
+create trigger on_connection_change
+  after insert or update on public.connections
+  for each row execute procedure public.notify_connection_change();
+
+-- 5b. Daily crossing notifications ----------------------------------------
+-- A running ledger of every (user, friend, stay pair) crossing ever
+-- detected, so the daily check only notifies about genuinely *new* ones —
+-- this is what gives "Croisements" a continuous thread over time instead
+-- of only surfacing whatever the current snapshot happens to show. Once
+-- notified, an entry is never removed, even if the underlying stay is
+-- later hidden — it's a historical record, not a live view.
+create table if not exists public.notified_crossings (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.profiles (id) on delete cascade,
+  friend_id uuid not null references public.profiles (id) on delete cascade,
+  my_stay_id uuid not null references public.stays (id) on delete cascade,
+  friend_stay_id uuid not null references public.stays (id) on delete cascade,
+  kind text not null check (kind in ('overlap', 'near_miss')),
+  created_at timestamptz not null default now(),
+  unique (user_id, friend_id, my_stay_id, friend_stay_id, kind)
+);
+
+create index if not exists notified_crossings_user_idx on public.notified_crossings (user_id);
+
+alter table public.notified_crossings enable row level security;
+
+create policy "Users can view their own notified crossings"
+  on public.notified_crossings for select
+  using (auth.uid() = user_id);
+
+-- Recomputes every current overlap/near-miss between accepted connections
+-- (mirroring lib/crossings.ts's matching rules via stays_are_close()) and
+-- notifies both sides about any pair not already in notified_crossings.
+-- Meant to run once a day (see the cron schedule below) — safe to run
+-- more often too, since it's naturally idempotent.
+create or replace function public.check_daily_crossings()
+returns integer
+language plpgsql
+security definer set search_path = public
+as $$
+declare
+  new_count integer := 0;
+  rec record;
+  inserted_id uuid;
+begin
+  for rec in
+    select
+      p.user_id,
+      p.friend_id,
+      s1.id as my_stay_id,
+      s2.id as friend_stay_id,
+      s2.city as friend_city,
+      coalesce(pr.display_name, pr.username) as friend_name,
+      case when s1.start_date <= s2.end_date and s2.start_date <= s1.end_date then 'overlap' else 'near_miss' end as kind
+    from (
+      select requester_id as user_id, addressee_id as friend_id from public.connections where status = 'accepted'
+      union all
+      select addressee_id as user_id, requester_id as friend_id from public.connections where status = 'accepted'
+    ) p
+    join public.stays s1 on s1.user_id = p.user_id and not s1.is_hidden
+    join public.stays s2 on s2.user_id = p.friend_id and not s2.is_hidden
+    join public.profiles pr on pr.id = p.friend_id
+    where public.stays_are_close(s1.latitude, s1.longitude, s1.city, s2.latitude, s2.longitude, s2.city)
+  loop
+    insert into public.notified_crossings (user_id, friend_id, my_stay_id, friend_stay_id, kind)
+    values (rec.user_id, rec.friend_id, rec.my_stay_id, rec.friend_stay_id, rec.kind)
+    on conflict (user_id, friend_id, my_stay_id, friend_stay_id, kind) do nothing
+    returning id into inserted_id;
+
+    if inserted_id is not null then
+      insert into public.notifications (user_id, type, title, body, data)
+      values (
+        rec.user_id,
+        case when rec.kind = 'overlap' then 'crossing_overlap' else 'crossing_near_miss' end,
+        case when rec.kind = 'overlap' then 'Nouveau croisement !' else 'Vous êtes presque croisés' end,
+        case
+          when rec.kind = 'overlap' then 'Toi et ' || rec.friend_name || ' étiez à ' || rec.friend_city || ' en même temps.'
+          else 'Toi et ' || rec.friend_name || ' êtes passés par ' || rec.friend_city || ', à des dates différentes.'
+        end,
+        jsonb_build_object('friend_id', rec.friend_id, 'friend_stay_id', rec.friend_stay_id, 'kind', rec.kind)
+      );
+      new_count := new_count + 1;
+    end if;
+    inserted_id := null;
+  end loop;
+
+  return new_count;
+end;
+$$;
+
+-- Schedules check_daily_crossings() to run every day at midnight (UTC,
+-- server time). Requires the pg_cron extension — enable it first via
+-- Dashboard > Database > Extensions (search "pg_cron"), or via:
+--   create extension if not exists pg_cron;
+-- if your project allows it directly from the SQL editor. If pg_cron
+-- isn't available on your plan, use Dashboard > Integrations > Cron Jobs
+-- instead to schedule the same `select public.check_daily_crossings();`
+-- SQL snippet on a "0 0 * * *" schedule.
+do $$
+begin
+  if exists (select 1 from pg_extension where extname = 'pg_cron') then
+    if exists (select 1 from cron.job where jobname = 'daily-crossing-check') then
+      perform cron.unschedule('daily-crossing-check');
+    end if;
+    perform cron.schedule('daily-crossing-check', '0 0 * * *', $cron$select public.check_daily_crossings();$cron$);
+  end if;
+end;
+$$;

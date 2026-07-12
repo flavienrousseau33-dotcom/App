@@ -6,6 +6,7 @@ import 'react-native-reanimated';
 
 import { useColorScheme } from '@/components/useColorScheme';
 import { AuthProvider, useAuth } from '@/hooks/useAuth';
+import { NotificationsProvider } from '@/hooks/useNotifications';
 
 export {
   // Catch any errors thrown by the Layout component.
@@ -42,7 +43,9 @@ export default function RootLayout() {
 
   return (
     <AuthProvider>
-      <RootLayoutNav />
+      <NotificationsProvider>
+        <RootLayoutNav />
+      </NotificationsProvider>
     </AuthProvider>
   );
 }
@@ -76,6 +79,7 @@ function RootLayoutNav() {
         <Stack.Screen name="(auth)" options={{ headerShown: false }} />
         <Stack.Screen name="stay/new" options={{ presentation: 'modal', title: 'Nouveau séjour' }} />
         <Stack.Screen name="crossing/map" options={{ presentation: 'modal', title: 'Sur la carte' }} />
+        <Stack.Screen name="notifications" options={{ presentation: 'modal', title: 'Notifications' }} />
       </Stack>
     </ThemeProvider>
   );

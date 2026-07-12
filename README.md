@@ -106,6 +106,9 @@ Scanne le QR code avec l'app **Expo Go** (iOS/Android) pour tester instantanéme
 - Profil avec statistiques (nombre de séjours, nombre d'amis) et déconnexion
 - Un compte suspendu depuis le back office est automatiquement déconnecté à la prochaine
   ouverture de l'app.
+- **Centre de notifications** (icône cloche en haut des onglets) : demandes/acceptations d'amis
+  en direct, et croisements détectés (voir section 11) — avec badge du nombre de non-lus et
+  marquage lu au clic ou via "Tout marquer comme lu".
 
 ## 5. Comment fonctionne le scan de photos
 
@@ -248,6 +251,43 @@ dans la configuration de l'hébergeur.
   compte (cascade sur ses séjours et connexions). Un admin ne peut pas s'auto-suspendre ni
   s'auto-supprimer.
 
+## 11. Centre de notifications et vérification quotidienne des croisements
+
+En plus des croisements déjà visibles à tout moment dans l'onglet Croisements, l'app construit
+un **fil continu** : chaque nuit, une fonction SQL vérifie si de nouveaux croisements (ou
+presque-croisements) sont apparus depuis la veille, et notifie les utilisateurs concernés — sans
+jamais renotifier deux fois le même croisement.
+
+- **`notifications`** (`supabase/schema.sql`, section 5) : table par utilisateur (type, titre,
+  corps, lu/non lu), avec RLS limitant chacun à ses propres notifications. Un trigger sur
+  `connections` crée automatiquement une notification à la demande de connexion et à son
+  acceptation.
+- **`notified_crossings`** : table de déduplication (une ligne par paire de séjours déjà
+  notifiée). `check_daily_crossings()` ne crée une notification que pour les croisements
+  réellement nouveaux — les anciens ne sont jamais supprimés ni renvoyés, ce qui construit un
+  historique additif ("thread continu") au fil du temps.
+- **`check_daily_crossings()`** (fonction `security definer`) : à exécuter une fois par jour, à
+  partir de minuit, pour vérifier les croisements de la journée précédente (recoupement ou
+  proximité de dates) en plus des croisements déjà passés.
+
+### Activer la vérification quotidienne
+
+Deux options, au choix, dans le dashboard Supabase du projet :
+
+1. **`pg_cron`** (si l'extension est disponible sur ton plan) : `supabase/schema.sql` tente
+   d'enregistrer automatiquement le job quotidien (`0 0 * * *`) si `pg_cron` est déjà activé
+   (Database > Extensions) — sinon ce bloc ne fait rien, sans erreur, et il suffit de l'activer
+   puis de rejouer `schema.sql` pour que la planification se mette en place.
+2. **Dashboard > Integrations > Cron Jobs** (plus simple, sans extension à activer) : crée un
+   job planifié sur `0 0 * * *` (tous les jours à minuit) exécutant :
+   ```sql
+   select public.check_daily_crossings();
+   ```
+
+Côté app, `hooks/useNotifications.tsx` s'abonne en temps réel (Supabase Realtime) aux nouvelles
+lignes de `notifications`, donc les notifications créées par ce job apparaissent dans le centre
+de notifications sans avoir à rouvrir l'app.
+
 ## Structure du projet
 
 ```
@@ -256,6 +296,8 @@ app/
   (tabs)/        Trajet (index), Croisements, Amis, Profil, Paramètres (settings)
   stay/new.tsx   formulaire modal d'ajout manuel de séjour
   crossing/map.tsx  carte OpenStreetMap d'un croisement
+  notifications.tsx  centre de notifications (modal)
+components/NotificationBellButton.tsx  icône cloche + badge non-lus, dans le header des onglets
 lib/geo.ts        clustering géographique des photos + calcul de recoupement de dates
 lib/photoScan.ts  orchestration du scan de la photothèque + sync Supabase
 lib/crossings.ts  calcul des croisements entre mes séjours et ceux d'un ami
@@ -264,6 +306,7 @@ lib/savedPlaces.ts       synchronise Maison/Travail/Lieux fréquents vers stays.
 lib/backfillCoordinates.ts  regéocode les séjours manuels sans coordonnées
 lib/format.ts     formatage des dates en français
 hooks/useAuth.tsx contexte d'authentification Supabase (bloque aussi les comptes suspendus)
+hooks/useNotifications.tsx  contexte du centre de notifications (fetch + Realtime)
 lib/supabase.ts   client Supabase
 supabase/schema.sql  schéma SQL (profiles, stays, connections, saved_places, fonctions admin)
 types/database.ts    types TypeScript partagés

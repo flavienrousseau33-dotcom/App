@@ -40,6 +40,19 @@ export type SavedPlace = {
   created_at: string;
 };
 
+export type NotificationType = 'crossing_overlap' | 'crossing_near_miss' | 'friend_request' | 'friend_accepted';
+
+export type AppNotification = {
+  id: string;
+  user_id: string;
+  type: NotificationType;
+  title: string;
+  body: string;
+  data: Record<string, unknown> | null;
+  is_read: boolean;
+  created_at: string;
+};
+
 export type ConnectionStatus = 'pending' | 'accepted' | 'declined';
 
 export type Connection = {
@@ -127,6 +140,19 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: 'saved_places_user_id_fkey';
+            columns: ['user_id'];
+            referencedRelation: 'profiles';
+            referencedColumns: ['id'];
+          },
+        ];
+      };
+      notifications: {
+        Row: AppNotification;
+        Insert: Partial<AppNotification> & { user_id: string; type: NotificationType; title: string; body: string };
+        Update: Partial<AppNotification>;
+        Relationships: [
+          {
+            foreignKeyName: 'notifications_user_id_fkey';
             columns: ['user_id'];
             referencedRelation: 'profiles';
             referencedColumns: ['id'];
