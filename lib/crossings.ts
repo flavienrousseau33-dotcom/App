@@ -6,6 +6,9 @@ import type { Crossing, CrossingBase, NearMissCrossing, OverlapCrossing, Stay } 
 // supabase/schema.sql, which enforces the same radius at the database level.
 const PROXIMITY_KM_THRESHOLD = 20;
 const MAX_RESULTS_PER_KIND = 15;
+// Kept in sync with check_daily_crossings() in supabase/schema.sql — a
+// near-miss further apart than this isn't worth surfacing as "you almost met".
+const NEAR_MISS_MAX_DAY_GAP = 7;
 
 function distanceBetween(a: Stay, b: Stay): number | null {
   if (a.latitude == null || a.longitude == null || b.latitude == null || b.longitude == null) {
@@ -71,7 +74,9 @@ export function computeCrossings(
             ? daysBetweenDates(mine.end_date, theirs.start_date)
             : daysBetweenDates(theirs.end_date, mine.start_date);
 
-        nearMisses.push({ ...base, kind: 'near-miss', dayGap });
+        if (dayGap <= NEAR_MISS_MAX_DAY_GAP) {
+          nearMisses.push({ ...base, kind: 'near-miss', dayGap });
+        }
       }
     }
   }

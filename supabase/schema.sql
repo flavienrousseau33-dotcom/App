@@ -532,6 +532,12 @@ begin
     join public.stays s2 on s2.user_id = p.friend_id and not s2.is_hidden
     join public.profiles pr on pr.id = p.friend_id
     where public.stays_are_close(s1.latitude, s1.longitude, s1.city, s2.latitude, s2.longitude, s2.city)
+      -- Near-misses more than 7 days apart aren't worth surfacing (mirrors
+      -- NEAR_MISS_MAX_DAY_GAP in lib/crossings.ts) — overlaps are always kept.
+      and (
+        s1.start_date <= s2.end_date and s2.start_date <= s1.end_date
+        or greatest(s1.start_date, s2.start_date) - least(s1.end_date, s2.end_date) <= 7
+      )
   loop
     insert into public.notified_crossings (user_id, friend_id, my_stay_id, friend_stay_id, kind)
     values (rec.user_id, rec.friend_id, rec.my_stay_id, rec.friend_stay_id, rec.kind)

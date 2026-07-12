@@ -96,9 +96,10 @@ Scanne le QR code avec l'app **Expo Go** (iOS/Android) pour tester instantanéme
 - **Amis** : recherche par pseudo, demande de connexion, acceptation/refus, liste des amis
 - **Croisements** : pour chaque ami connecté, deux listes calculées par `lib/crossings.ts` —
   celles où vous étiez au même endroit en même temps (triée par distance, la plus proche
-  d'abord), et celles où vous êtes passés au même endroit à des dates différentes (triée par
-  écart de jours, le plus proche d'abord). La distance utilise les coordonnées précises du
-  séjour quand elles existent, avec repli sur le nom de ville sinon.
+  d'abord), et celles où vous êtes passés au même endroit à des dates différentes, à 7 jours
+  d'écart maximum (triée par écart de jours, le plus proche d'abord) — au-delà, ce n'est plus un
+  vrai "presque croisé". La distance utilise les coordonnées précises du séjour quand elles
+  existent, avec repli sur le nom de ville sinon.
 - **Paramètres > Lieux cachés** (accessible via l'icône roue crantée en haut, pas un onglet) :
   Maison / Travail (adresse déclarée) et Lieux fréquents (détectés automatiquement,
   `lib/homeDetection.ts`), chacun avec un interrupteur visible/masqué (`lib/savedPlaces.ts`
