@@ -86,6 +86,85 @@ export type OverlapCrossing = CrossingBase & { kind: 'overlap'; overlapStart: st
 export type NearMissCrossing = CrossingBase & { kind: 'near-miss'; dayGap: number };
 export type Crossing = OverlapCrossing | NearMissCrossing;
 
+export type CrossingThreadKind = 'overlap' | 'near_miss';
+
+// One row per real-world crossing, possibly shared by more than two people.
+// Returned as JSON by the get_thread_overview() RPC (see supabase/schema.sql),
+// not read directly from the table — see ThreadParticipant for why.
+export type ThreadOverview = {
+  id: string;
+  city: string;
+  country: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  period_start: string;
+  period_end: string;
+  kind: CrossingThreadKind;
+  created_at: string;
+  like_count: number;
+  liked_by_me: boolean;
+  participants: ThreadParticipant[];
+};
+
+// display_name/username/avatar_url are already anonymized server-side
+// ('Un autre voyageur', null, null) when `is_friend` is false and `is_you`
+// is false — never re-derive identity from user_id on the client.
+export type ThreadParticipant = {
+  user_id: string;
+  display_name: string;
+  username: string | null;
+  avatar_url: string | null;
+  is_you: boolean;
+  is_friend: boolean;
+  city: string;
+};
+
+export type ThreadComment = {
+  id: string;
+  user_id: string;
+  author_name: string;
+  is_you: boolean;
+  is_friend: boolean;
+  body: string;
+  created_at: string;
+};
+
+export type ThreadPhoto = {
+  id: string;
+  user_id: string;
+  author_name: string;
+  is_you: boolean;
+  is_friend: boolean;
+  storage_path: string;
+  created_at: string;
+};
+
+// Raw table rows, used only for the insert/delete calls the client makes
+// directly (posting/removing your own comment, like, or photo) — reads go
+// through the RPCs above instead.
+export type CrossingThreadComment = {
+  id: string;
+  thread_id: string;
+  user_id: string;
+  body: string;
+  created_at: string;
+};
+
+export type CrossingThreadLike = {
+  id: string;
+  thread_id: string;
+  user_id: string;
+  created_at: string;
+};
+
+export type CrossingThreadPhoto = {
+  id: string;
+  thread_id: string;
+  user_id: string;
+  storage_path: string;
+  created_at: string;
+};
+
 // Minimal typed schema for the Supabase client. Extend as new tables are added.
 export type Database = {
   public: {
@@ -159,8 +238,43 @@ export type Database = {
           },
         ];
       };
+      crossing_thread_comments: {
+        Row: CrossingThreadComment;
+        Insert: Partial<CrossingThreadComment> & { thread_id: string; user_id: string; body: string };
+        Update: Partial<CrossingThreadComment>;
+        Relationships: [];
+      };
+      crossing_thread_likes: {
+        Row: CrossingThreadLike;
+        Insert: Partial<CrossingThreadLike> & { thread_id: string; user_id: string };
+        Update: Partial<CrossingThreadLike>;
+        Relationships: [];
+      };
+      crossing_thread_photos: {
+        Row: CrossingThreadPhoto;
+        Insert: Partial<CrossingThreadPhoto> & { thread_id: string; user_id: string; storage_path: string };
+        Update: Partial<CrossingThreadPhoto>;
+        Relationships: [];
+      };
     };
     Views: {};
-    Functions: {};
+    Functions: {
+      get_or_create_crossing_thread: {
+        Args: { p_my_stay_id: string; p_friend_stay_id: string };
+        Returns: string;
+      };
+      get_thread_overview: {
+        Args: { p_thread_id: string };
+        Returns: ThreadOverview;
+      };
+      get_thread_comments: {
+        Args: { p_thread_id: string };
+        Returns: ThreadComment[];
+      };
+      get_thread_photos: {
+        Args: { p_thread_id: string };
+        Returns: ThreadPhoto[];
+      };
+    };
   };
 };

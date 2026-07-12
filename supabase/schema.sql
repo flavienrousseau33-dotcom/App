@@ -583,3 +583,466 @@ begin
   end if;
 end;
 $$;
+
+-- 6. Crossing threads (likes, comments, shared photos) --------------------
+-- One thread per real-world crossing. A thread starts with two people (an
+-- overlap or near-miss between you and a friend) but naturally grows to more
+-- than two if a third person's stay also matches one already in the thread
+-- (see upsert_crossing_thread_pair below) — e.g. three friends who were all
+-- in Lisbon that same week.
+--
+-- Group threads need care: two members of the same thread aren't
+-- necessarily connected to *each other* (you might both be connected to the
+-- third person without knowing one another). Every read path below
+-- therefore anonymizes a participant's identity (name, username, avatar)
+-- and their comments/photos unless the viewer is that person or is
+-- mutually connected with them — mirroring the rest of this schema's rule
+-- that connection status, not thread membership, gates who you can identify.
+create table if not exists public.crossing_threads (
+  id uuid primary key default gen_random_uuid(),
+  city text not null,
+  country text,
+  latitude double precision,
+  longitude double precision,
+  period_start date not null,
+  period_end date not null,
+  kind text not null check (kind in ('overlap', 'near_miss')),
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.crossing_thread_members (
+  id uuid primary key default gen_random_uuid(),
+  thread_id uuid not null references public.crossing_threads (id) on delete cascade,
+  user_id uuid not null references public.profiles (id) on delete cascade,
+  stay_id uuid not null references public.stays (id) on delete cascade,
+  created_at timestamptz not null default now(),
+  unique (thread_id, user_id)
+);
+
+create index if not exists crossing_thread_members_stay_idx on public.crossing_thread_members (stay_id);
+
+create table if not exists public.crossing_thread_likes (
+  id uuid primary key default gen_random_uuid(),
+  thread_id uuid not null references public.crossing_threads (id) on delete cascade,
+  user_id uuid not null references public.profiles (id) on delete cascade,
+  created_at timestamptz not null default now(),
+  unique (thread_id, user_id)
+);
+
+create table if not exists public.crossing_thread_comments (
+  id uuid primary key default gen_random_uuid(),
+  thread_id uuid not null references public.crossing_threads (id) on delete cascade,
+  user_id uuid not null references public.profiles (id) on delete cascade,
+  body text not null check (char_length(body) between 1 and 1000),
+  created_at timestamptz not null default now()
+);
+
+create index if not exists crossing_thread_comments_thread_idx on public.crossing_thread_comments (thread_id, created_at);
+
+create table if not exists public.crossing_thread_photos (
+  id uuid primary key default gen_random_uuid(),
+  thread_id uuid not null references public.crossing_threads (id) on delete cascade,
+  user_id uuid not null references public.profiles (id) on delete cascade,
+  storage_path text not null,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists crossing_thread_photos_thread_idx on public.crossing_thread_photos (thread_id, created_at);
+
+alter table public.crossing_threads enable row level security;
+alter table public.crossing_thread_members enable row level security;
+alter table public.crossing_thread_likes enable row level security;
+alter table public.crossing_thread_comments enable row level security;
+alter table public.crossing_thread_photos enable row level security;
+
+-- Security-definer so it can check membership without itself being blocked
+-- by the (deliberately policy-less) crossing_thread_members table below.
+create or replace function public.is_thread_member(p_thread_id uuid)
+returns boolean
+language sql
+security definer set search_path = public
+stable
+as $$
+  select exists (
+    select 1 from public.crossing_thread_members m
+    where m.thread_id = p_thread_id and m.user_id = auth.uid()
+  );
+$$;
+
+drop policy if exists "Members can view their threads" on public.crossing_threads;
+create policy "Members can view their threads"
+  on public.crossing_threads for select
+  using (public.is_thread_member(id));
+
+-- crossing_thread_members has no select/insert/delete policy at all: the raw
+-- user_id/stay_id mapping is only ever exposed through get_thread_overview()
+-- below, which is what applies the anonymization rule. Direct table access
+-- would let a member bypass it by joining profiles themselves.
+
+drop policy if exists "Members can view likes" on public.crossing_thread_likes;
+create policy "Members can view likes"
+  on public.crossing_thread_likes for select
+  using (public.is_thread_member(thread_id));
+
+drop policy if exists "Members can like" on public.crossing_thread_likes;
+create policy "Members can like"
+  on public.crossing_thread_likes for insert
+  with check (public.is_thread_member(thread_id) and user_id = auth.uid());
+
+drop policy if exists "Members can unlike their own like" on public.crossing_thread_likes;
+create policy "Members can unlike their own like"
+  on public.crossing_thread_likes for delete
+  using (user_id = auth.uid());
+
+-- Comments and photos are readable only through get_thread_comments() /
+-- get_thread_photos() (anonymized) — no select policy here either. Posting
+-- and deleting your own row is a plain policy since that never reveals
+-- anyone else's identity.
+drop policy if exists "Members can comment" on public.crossing_thread_comments;
+create policy "Members can comment"
+  on public.crossing_thread_comments for insert
+  with check (public.is_thread_member(thread_id) and user_id = auth.uid());
+
+drop policy if exists "Members can delete their own comment" on public.crossing_thread_comments;
+create policy "Members can delete their own comment"
+  on public.crossing_thread_comments for delete
+  using (user_id = auth.uid());
+
+drop policy if exists "Members can add photos" on public.crossing_thread_photos;
+create policy "Members can add photos"
+  on public.crossing_thread_photos for insert
+  with check (public.is_thread_member(thread_id) and user_id = auth.uid());
+
+drop policy if exists "Members can delete their own photo" on public.crossing_thread_photos;
+create policy "Members can delete their own photo"
+  on public.crossing_thread_photos for delete
+  using (user_id = auth.uid());
+
+-- Internal engine behind both get_or_create_crossing_thread() (below) and
+-- check_daily_crossings(): finds an existing thread that already contains
+-- either stay and adds the missing member to it, or creates a new thread.
+-- This is what lets a thread grow past two people over time.
+--
+-- Deliberately takes explicit user/stay ids instead of relying on auth.uid(),
+-- because check_daily_crossings() calls it for pairs that have nothing to do
+-- with the current request's caller. That means it must NOT be reachable
+-- directly by clients (it does no ownership/connection check of its own) —
+-- revoked from anon/authenticated right after creation; only callable from
+-- other security-definer functions owned by the same role.
+create or replace function public.upsert_crossing_thread_pair(
+  p_user_id uuid,
+  p_stay_id uuid,
+  p_friend_user_id uuid,
+  p_friend_stay_id uuid
+)
+returns uuid
+language plpgsql
+security definer set search_path = public
+as $$
+declare
+  v_stay record;
+  v_friend_stay record;
+  v_thread_id uuid;
+  v_kind text;
+begin
+  select * into v_stay from public.stays where id = p_stay_id;
+  select * into v_friend_stay from public.stays where id = p_friend_stay_id;
+
+  v_kind := case
+    when v_stay.start_date <= v_friend_stay.end_date and v_friend_stay.start_date <= v_stay.end_date then 'overlap'
+    else 'near_miss'
+  end;
+
+  -- Known limitation: if both stays already independently belong to two
+  -- different existing threads, this just picks one arbitrarily rather than
+  -- merging the two threads — an edge case left unhandled for now.
+  select m.thread_id into v_thread_id
+  from public.crossing_thread_members m
+  where m.stay_id in (p_stay_id, p_friend_stay_id)
+  limit 1;
+
+  if v_thread_id is null then
+    insert into public.crossing_threads (city, country, latitude, longitude, period_start, period_end, kind)
+    values (
+      v_stay.city,
+      coalesce(v_stay.country, v_friend_stay.country),
+      v_stay.latitude,
+      v_stay.longitude,
+      least(v_stay.start_date, v_friend_stay.start_date),
+      greatest(v_stay.end_date, v_friend_stay.end_date),
+      v_kind
+    )
+    returning id into v_thread_id;
+  else
+    update public.crossing_threads
+    set
+      kind = case when v_kind = 'overlap' then 'overlap' else kind end,
+      period_start = least(period_start, v_stay.start_date, v_friend_stay.start_date),
+      period_end = greatest(period_end, v_stay.end_date, v_friend_stay.end_date)
+    where id = v_thread_id;
+  end if;
+
+  insert into public.crossing_thread_members (thread_id, user_id, stay_id)
+  values (v_thread_id, p_user_id, p_stay_id)
+  on conflict (thread_id, user_id) do nothing;
+
+  insert into public.crossing_thread_members (thread_id, user_id, stay_id)
+  values (v_thread_id, p_friend_user_id, p_friend_stay_id)
+  on conflict (thread_id, user_id) do nothing;
+
+  return v_thread_id;
+end;
+$$;
+
+revoke execute on function public.upsert_crossing_thread_pair(uuid, uuid, uuid, uuid) from public, anon, authenticated;
+
+-- Client-facing entry point: "open (or start) the thread for this
+-- crossing." Called when someone taps "Voir le thread" on a crossing in
+-- the app. Re-validates everything the client claims (the stay is really
+-- theirs, the two are really connected, the stays are really close) before
+-- delegating to upsert_crossing_thread_pair.
+create or replace function public.get_or_create_crossing_thread(p_my_stay_id uuid, p_friend_stay_id uuid)
+returns uuid
+language plpgsql
+security definer set search_path = public
+as $$
+declare
+  v_my_stay record;
+  v_friend_stay record;
+begin
+  select * into v_my_stay from public.stays where id = p_my_stay_id and user_id = auth.uid();
+  if not found then
+    raise exception 'not your stay';
+  end if;
+
+  select * into v_friend_stay from public.stays where id = p_friend_stay_id;
+  if not found then
+    raise exception 'stay not found';
+  end if;
+
+  if not public.are_connected(auth.uid(), v_friend_stay.user_id) then
+    raise exception 'not connected to this user';
+  end if;
+
+  if not public.stays_are_close(v_my_stay.latitude, v_my_stay.longitude, v_my_stay.city, v_friend_stay.latitude, v_friend_stay.longitude, v_friend_stay.city) then
+    raise exception 'stays are not close';
+  end if;
+
+  return public.upsert_crossing_thread_pair(auth.uid(), p_my_stay_id, v_friend_stay.user_id, p_friend_stay_id);
+end;
+$$;
+
+-- Single call the thread screen uses to render everything except the
+-- comment/photo lists: thread metadata, like count/state, and the
+-- (anonymized) participant list.
+create or replace function public.get_thread_overview(p_thread_id uuid)
+returns jsonb
+language plpgsql
+security definer set search_path = public
+stable
+as $$
+declare
+  v_result jsonb;
+begin
+  if not public.is_thread_member(p_thread_id) then
+    raise exception 'not a member of this thread';
+  end if;
+
+  select jsonb_build_object(
+    'id', t.id,
+    'city', t.city,
+    'country', t.country,
+    'latitude', t.latitude,
+    'longitude', t.longitude,
+    'period_start', t.period_start,
+    'period_end', t.period_end,
+    'kind', t.kind,
+    'created_at', t.created_at,
+    'like_count', (select count(*) from public.crossing_thread_likes l where l.thread_id = t.id),
+    'liked_by_me', exists (select 1 from public.crossing_thread_likes l where l.thread_id = t.id and l.user_id = auth.uid()),
+    'participants', coalesce((
+      select jsonb_agg(jsonb_build_object(
+        'user_id', m.user_id,
+        'display_name', case
+          when m.user_id = auth.uid() or public.are_connected(auth.uid(), m.user_id) then coalesce(p.display_name, p.username)
+          else 'Un autre voyageur'
+        end,
+        'username', case when m.user_id = auth.uid() or public.are_connected(auth.uid(), m.user_id) then p.username else null end,
+        'avatar_url', case when m.user_id = auth.uid() or public.are_connected(auth.uid(), m.user_id) then p.avatar_url else null end,
+        'is_you', m.user_id = auth.uid(),
+        'is_friend', public.are_connected(auth.uid(), m.user_id),
+        'city', s.city
+      ) order by m.created_at)
+      from public.crossing_thread_members m
+      join public.profiles p on p.id = m.user_id
+      join public.stays s on s.id = m.stay_id
+      where m.thread_id = t.id
+    ), '[]'::jsonb)
+  )
+  into v_result
+  from public.crossing_threads t
+  where t.id = p_thread_id;
+
+  return v_result;
+end;
+$$;
+
+create or replace function public.get_thread_comments(p_thread_id uuid)
+returns table (
+  id uuid,
+  user_id uuid,
+  author_name text,
+  is_you boolean,
+  is_friend boolean,
+  body text,
+  created_at timestamptz
+)
+language plpgsql
+security definer set search_path = public
+stable
+as $$
+begin
+  if not public.is_thread_member(p_thread_id) then
+    raise exception 'not a member of this thread';
+  end if;
+
+  return query
+  select
+    c.id,
+    c.user_id,
+    case when c.user_id = auth.uid() or public.are_connected(auth.uid(), c.user_id) then coalesce(p.display_name, p.username) else 'Un autre voyageur' end,
+    c.user_id = auth.uid(),
+    public.are_connected(auth.uid(), c.user_id),
+    c.body,
+    c.created_at
+  from public.crossing_thread_comments c
+  join public.profiles p on p.id = c.user_id
+  where c.thread_id = p_thread_id
+  order by c.created_at asc;
+end;
+$$;
+
+create or replace function public.get_thread_photos(p_thread_id uuid)
+returns table (
+  id uuid,
+  user_id uuid,
+  author_name text,
+  is_you boolean,
+  is_friend boolean,
+  storage_path text,
+  created_at timestamptz
+)
+language plpgsql
+security definer set search_path = public
+stable
+as $$
+begin
+  if not public.is_thread_member(p_thread_id) then
+    raise exception 'not a member of this thread';
+  end if;
+
+  return query
+  select
+    ph.id,
+    ph.user_id,
+    case when ph.user_id = auth.uid() or public.are_connected(auth.uid(), ph.user_id) then coalesce(p.display_name, p.username) else 'Un autre voyageur' end,
+    ph.user_id = auth.uid(),
+    public.are_connected(auth.uid(), ph.user_id),
+    ph.storage_path,
+    ph.created_at
+  from public.crossing_thread_photos ph
+  join public.profiles p on p.id = ph.user_id
+  where ph.thread_id = p_thread_id
+  order by ph.created_at desc;
+end;
+$$;
+
+-- Update check_daily_crossings() to also open/extend a thread for every
+-- crossing it detects, and to hand the thread id to the notification so
+-- tapping it can deep-link straight into the thread instead of the tab.
+create or replace function public.check_daily_crossings()
+returns integer
+language plpgsql
+security definer set search_path = public
+as $$
+declare
+  new_count integer := 0;
+  rec record;
+  inserted_id uuid;
+  v_thread_id uuid;
+begin
+  for rec in
+    select
+      p.user_id,
+      p.friend_id,
+      s1.id as my_stay_id,
+      s2.id as friend_stay_id,
+      s2.city as friend_city,
+      coalesce(pr.display_name, pr.username) as friend_name,
+      case when s1.start_date <= s2.end_date and s2.start_date <= s1.end_date then 'overlap' else 'near_miss' end as kind
+    from (
+      select requester_id as user_id, addressee_id as friend_id from public.connections where status = 'accepted'
+      union all
+      select addressee_id as user_id, requester_id as friend_id from public.connections where status = 'accepted'
+    ) p
+    join public.stays s1 on s1.user_id = p.user_id and not s1.is_hidden
+    join public.stays s2 on s2.user_id = p.friend_id and not s2.is_hidden
+    join public.profiles pr on pr.id = p.friend_id
+    where public.stays_are_close(s1.latitude, s1.longitude, s1.city, s2.latitude, s2.longitude, s2.city)
+      -- Near-misses more than 7 days apart aren't worth surfacing (mirrors
+      -- NEAR_MISS_MAX_DAY_GAP in lib/crossings.ts) — overlaps are always kept.
+      and (
+        s1.start_date <= s2.end_date and s2.start_date <= s1.end_date
+        or greatest(s1.start_date, s2.start_date) - least(s1.end_date, s2.end_date) <= 7
+      )
+  loop
+    v_thread_id := public.upsert_crossing_thread_pair(rec.user_id, rec.my_stay_id, rec.friend_id, rec.friend_stay_id);
+
+    insert into public.notified_crossings (user_id, friend_id, my_stay_id, friend_stay_id, kind)
+    values (rec.user_id, rec.friend_id, rec.my_stay_id, rec.friend_stay_id, rec.kind)
+    on conflict (user_id, friend_id, my_stay_id, friend_stay_id, kind) do nothing
+    returning id into inserted_id;
+
+    if inserted_id is not null then
+      insert into public.notifications (user_id, type, title, body, data)
+      values (
+        rec.user_id,
+        case when rec.kind = 'overlap' then 'crossing_overlap' else 'crossing_near_miss' end,
+        case when rec.kind = 'overlap' then 'Nouveau croisement !' else 'Vous êtes presque croisés' end,
+        case
+          when rec.kind = 'overlap' then 'Toi et ' || rec.friend_name || ' étiez à ' || rec.friend_city || ' en même temps.'
+          else 'Toi et ' || rec.friend_name || ' êtes passés par ' || rec.friend_city || ', à des dates différentes.'
+        end,
+        jsonb_build_object('friend_id', rec.friend_id, 'friend_stay_id', rec.friend_stay_id, 'kind', rec.kind, 'thread_id', v_thread_id)
+      );
+      new_count := new_count + 1;
+    end if;
+    inserted_id := null;
+  end loop;
+
+  return new_count;
+end;
+$$;
+
+-- Private storage bucket for thread photos. Objects are stored under
+-- `{thread_id}/{filename}` so RLS can gate access by thread membership
+-- without needing to know who uploaded which photo (upload authorship is
+-- itself only exposed, anonymized, through get_thread_photos() above).
+insert into storage.buckets (id, name, public)
+values ('thread-photos', 'thread-photos', false)
+on conflict (id) do nothing;
+
+drop policy if exists "Thread members can view thread photos" on storage.objects;
+create policy "Thread members can view thread photos"
+  on storage.objects for select
+  using (bucket_id = 'thread-photos' and public.is_thread_member(((storage.foldername(name))[1])::uuid));
+
+drop policy if exists "Thread members can upload thread photos" on storage.objects;
+create policy "Thread members can upload thread photos"
+  on storage.objects for insert
+  with check (bucket_id = 'thread-photos' and public.is_thread_member(((storage.foldername(name))[1])::uuid));
+
+drop policy if exists "Uploader can delete their thread photo" on storage.objects;
+create policy "Uploader can delete their thread photo"
+  on storage.objects for delete
+  using (bucket_id = 'thread-photos' and owner = auth.uid());

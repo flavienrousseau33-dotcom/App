@@ -11,7 +11,7 @@
       "supportsTablet": true,
       "bundleIdentifier": "com.flavienrousseau.traces",
       "infoPlist": {
-        "NSPhotoLibraryUsageDescription": "Traces lit la date et le lieu de tes photos pour reconstituer ton trajet de vie. Les photos elles-mêmes ne sont jamais envoyées sur nos serveurs.",
+        "NSPhotoLibraryUsageDescription": "Traces lit la date et le lieu de tes photos pour reconstituer ton trajet de vie, et te permet de partager une photo de ton choix sur le fil d'un croisement.",
         "NSLocationWhenInUseUsageDescription": "Traces utilise la localisation uniquement pour convertir les coordonnées de tes photos en noms de villes."
       }
     },
@@ -46,6 +46,12 @@
         "expo-location",
         {
           "locationWhenInUsePermission": "Traces utilise la localisation uniquement pour convertir les coordonnées de tes photos en noms de villes."
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Traces te permet de choisir une photo à partager sur le fil d'un croisement."
         }
       ],
       [

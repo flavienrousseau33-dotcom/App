@@ -29,7 +29,12 @@ export default function NotificationsScreen() {
     if (!notification.is_read) await markAsRead(notification.id);
 
     if (notification.type === 'crossing_overlap' || notification.type === 'crossing_near_miss') {
-      router.push('/(tabs)/crossings');
+      const threadId = notification.data?.thread_id;
+      if (typeof threadId === 'string') {
+        router.push({ pathname: '/crossing/thread', params: { id: threadId } });
+      } else {
+        router.push('/(tabs)/crossings');
+      }
     } else {
       router.push('/(tabs)/friends');
     }

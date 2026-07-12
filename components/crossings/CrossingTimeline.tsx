@@ -1,11 +1,13 @@
 import { useRouter } from 'expo-router';
-import { Pressable, StyleSheet } from 'react-native';
+import { useState } from 'react';
+import { ActivityIndicator, Pressable, StyleSheet } from 'react-native';
 
 import { Text, View } from '@/components/Themed';
 import Colors from '@/constants/Colors';
 import { useColorScheme } from '@/components/useColorScheme';
 import { crossingDistanceLabel, crossingLocationLabel, type TimelineEntry } from '@/lib/crossings';
 import { formatDateRange, formatMonthYear } from '@/lib/format';
+import { getOrCreateThread } from '@/lib/threads';
 
 type Props = {
   entries: TimelineEntry[];
@@ -54,13 +56,38 @@ export function CrossingTimeline({ entries, friendName }: Props) {
                   </Text>
                 )}
 
-                <MapLink crossing={crossing} friendName={friendName} tint={tint} />
+                <View style={styles.linkRow}>
+                  <MapLink crossing={crossing} friendName={friendName} tint={tint} />
+                  <ThreadLink crossing={crossing} tint={tint} />
+                </View>
               </View>
             </View>
           </View>
         );
       })}
     </View>
+  );
+}
+
+function ThreadLink({ crossing, tint }: { crossing: TimelineEntry['crossing']; tint: string }) {
+  const router = useRouter();
+  const [loading, setLoading] = useState(false);
+
+  async function handlePress() {
+    if (loading) return;
+    setLoading(true);
+    try {
+      const threadId = await getOrCreateThread(crossing.myStay.id, crossing.friendStay.id);
+      router.push({ pathname: '/crossing/thread', params: { id: threadId } });
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <Pressable style={styles.mapLink} onPress={handlePress} disabled={loading}>
+      {loading ? <ActivityIndicator size="small" color={tint} /> : <Text style={{ color: tint, fontWeight: '600', fontSize: 13 }}>Voir le fil →</Text>}
+    </Pressable>
   );
 }
 
@@ -107,5 +134,6 @@ const styles = StyleSheet.create({
   badge: { borderRadius: 999, paddingHorizontal: 8, paddingVertical: 2 },
   badgeText: { color: '#fff', fontSize: 11, fontWeight: '700' },
   detail: { opacity: 0.7, fontSize: 13 },
+  linkRow: { flexDirection: 'row', gap: 16 },
   mapLink: { marginTop: 4 },
 });

@@ -111,6 +111,8 @@ Scanne le QR code avec l'app **Expo Go** (iOS/Android) pour tester instantanéme
 - **Centre de notifications** (icône cloche en haut, à côté de la roue crantée) : demandes/acceptations d'amis
   en direct, et croisements détectés (voir section 11) — avec badge du nombre de non-lus et
   marquage lu au clic ou via "Tout marquer comme lu".
+- **Fil de croisement** ("Voir le fil" sur une entrée de Croisements) : j'aime, commentaires et
+  partage de photos entre les personnes concernées par ce croisement précis (voir section 12).
 
 ## 5. Comment fonctionne le scan de photos
 
@@ -290,6 +292,35 @@ Côté app, `hooks/useNotifications.tsx` s'abonne en temps réel (Supabase Realt
 lignes de `notifications`, donc les notifications créées par ce job apparaissent dans le centre
 de notifications sans avoir à rouvrir l'app.
 
+## 12. Fil de croisement (j'aime, commentaires, photos)
+
+Chaque croisement (bouton "Voir le fil" dans Croisements, ou tap sur une notification de
+croisement) ouvre un **fil** dédié — `app/crossing/thread.tsx` — où les personnes concernées
+peuvent aimer, commenter et partager une photo autour de ce moment précis.
+
+- **Un fil peut réunir plus de deux personnes.** Il démarre entre toi et un ami, mais si le
+  séjour de l'un de vous croise *aussi* celui d'une troisième personne (ex : trois amis qui
+  étaient tous à Lisbonne la même semaine, sans être tous connectés entre eux), cette personne
+  rejoint automatiquement le même fil au lieu d'en créer un nouveau — voir
+  `upsert_crossing_thread_pair()` dans `supabase/schema.sql`.
+- **Anonymisation entre non-amis.** Être dans le même fil ne veut pas dire être ami avec tout le
+  monde qui s'y trouve : deux participants peuvent tous les deux te connaître sans se connaître
+  entre eux. La règle du reste du schéma s'applique donc ici aussi — c'est le statut de connexion
+  (`are_connected()`), pas la simple appartenance au fil, qui donne accès à l'identité de
+  quelqu'un. Concrètement : le nom, le pseudo et l'avatar d'un participant qui n'est pas ton ami
+  (et n'est pas toi) sont remplacés par "Un autre voyageur" — y compris sur ses commentaires et
+  ses photos — par `get_thread_overview()`, `get_thread_comments()` et `get_thread_photos()`.
+  Ces trois fonctions (`security definer`) sont le *seul* moyen de lire ces données : les tables
+  brutes (`crossing_thread_members`, `crossing_thread_comments`, `crossing_thread_photos`) n'ont
+  volontairement aucune policy RLS de lecture, pour qu'il soit impossible de contourner
+  l'anonymisation en interrogeant la table directement.
+- **Photos** : stockées dans un bucket Supabase Storage privé (`thread-photos`), organisé en
+  `{thread_id}/...` — l'accès est vérifié par thread (n'importe quel membre peut voir toutes les
+  photos du fil), jamais par utilisateur, pour ne pas avoir à révéler qui a posté quoi en dehors
+  du chemin anonymisé ci-dessus. Sélection depuis la photothèque via `expo-image-picker`.
+- **J'aime et commentaires** passent par de simples policies RLS (poster/supprimer sa propre
+  ligne), puisque ça ne révèle jamais l'identité de quelqu'un d'autre.
+
 ## Structure du projet
 
 ```
@@ -300,11 +331,13 @@ app/
   crossing/map.tsx  carte OpenStreetMap d'un croisement
   notifications.tsx  centre de notifications (modal, ouvert depuis l'icône cloche)
   settings.tsx   Lieux cachés (modal, ouvert depuis l'icône roue crantée — pas un onglet)
+  crossing/thread.tsx  fil d'un croisement : j'aime, commentaires, photos (modal)
 components/NotificationBellButton.tsx  icône cloche + badge non-lus, dans le header
 components/SettingsGearButton.tsx  icône roue crantée, dans le header
 lib/geo.ts        clustering géographique des photos + calcul de recoupement de dates
 lib/photoScan.ts  orchestration du scan de la photothèque + sync Supabase
 lib/crossings.ts  calcul des croisements entre mes séjours et ceux d'un ami
+lib/threads.ts    appels RPC/Storage pour le fil d'un croisement
 lib/homeDetection.ts     détection des lieux visités 3 fois ou plus
 lib/savedPlaces.ts       synchronise Maison/Travail/Lieux fréquents vers stays.is_hidden
 lib/backfillCoordinates.ts  regéocode les séjours manuels sans coordonnées
