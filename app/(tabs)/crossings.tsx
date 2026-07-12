@@ -1,7 +1,9 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, RefreshControl, ScrollView, StyleSheet } from 'react-native';
 
+import { CrossingStats } from '@/components/crossings/CrossingStats';
 import { CrossingTimeline } from '@/components/crossings/CrossingTimeline';
+import { FriendFilterDropdown } from '@/components/crossings/FriendFilterDropdown';
 import { Text, View } from '@/components/Themed';
 import { useAuth } from '@/hooks/useAuth';
 import { buildCrossingTimeline, computeCrossings } from '@/lib/crossings';
@@ -20,6 +22,7 @@ export default function CrossingsScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [selectedFriendId, setSelectedFriendId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!user) return;
@@ -85,6 +88,29 @@ export default function CrossingsScreen() {
     setRefreshing(false);
   }
 
+  const filteredGroups = useMemo(
+    () => (selectedFriendId ? groups.filter((g) => g.friend.id === selectedFriendId) : groups),
+    [groups, selectedFriendId]
+  );
+
+  const stats = useMemo(() => {
+    let totalOverlaps = 0;
+    let totalNearMisses = 0;
+    let closestNearMiss: { friendName: string; crossing: NearMissCrossing } | null = null;
+
+    for (const g of filteredGroups) {
+      totalOverlaps += g.overlaps.length;
+      totalNearMisses += g.nearMisses.length;
+      for (const crossing of g.nearMisses) {
+        if (!closestNearMiss || crossing.dayGap < closestNearMiss.crossing.dayGap) {
+          closestNearMiss = { friendName: g.friend.display_name || g.friend.username, crossing };
+        }
+      }
+    }
+
+    return { totalOverlaps, totalNearMisses, closestNearMiss };
+  }, [filteredGroups]);
+
   if (loading) {
     return (
       <View style={styles.center}>
@@ -109,16 +135,30 @@ export default function CrossingsScreen() {
           </Text>
         </View>
       ) : (
-        groups.map(({ friend, overlaps, nearMisses }) => {
-          const friendName = friend.display_name || friend.username;
-          const entries = buildCrossingTimeline(overlaps, nearMisses);
-          return (
-            <View key={friend.id} style={styles.friendGroup}>
-              <Text style={styles.friendName}>{friendName}</Text>
-              <CrossingTimeline entries={entries} friendName={friendName} />
-            </View>
-          );
-        })
+        <>
+          <FriendFilterDropdown
+            friends={groups.map((g) => ({ id: g.friend.id, name: g.friend.display_name || g.friend.username }))}
+            selectedId={selectedFriendId}
+            onSelect={setSelectedFriendId}
+          />
+
+          <CrossingStats
+            totalOverlaps={stats.totalOverlaps}
+            totalNearMisses={stats.totalNearMisses}
+            closestNearMiss={stats.closestNearMiss}
+          />
+
+          {filteredGroups.map(({ friend, overlaps, nearMisses }) => {
+            const friendName = friend.display_name || friend.username;
+            const entries = buildCrossingTimeline(overlaps, nearMisses);
+            return (
+              <View key={friend.id} style={styles.friendGroup}>
+                <Text style={styles.friendName}>{friendName}</Text>
+                <CrossingTimeline entries={entries} friendName={friendName} />
+              </View>
+            );
+          })}
+        </>
       )}
     </ScrollView>
   );
