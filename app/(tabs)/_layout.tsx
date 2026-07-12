@@ -1,7 +1,9 @@
 import { SymbolView } from 'expo-symbols';
 import { Tabs } from 'expo-router';
+import { View } from 'react-native';
 
 import { NotificationBellButton } from '@/components/NotificationBellButton';
+import { SettingsGearButton } from '@/components/SettingsGearButton';
 import Colors from '@/constants/Colors';
 import { useColorScheme } from '@/components/useColorScheme';
 import { useClientOnlyValue } from '@/components/useClientOnlyValue';
@@ -16,7 +18,12 @@ export default function TabLayout() {
         // Disable the static render of the header on web
         // to prevent a hydration error in React Navigation v6.
         headerShown: useClientOnlyValue(false, true),
-        headerRight: () => <NotificationBellButton />,
+        headerRight: () => (
+          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            <SettingsGearButton />
+            <NotificationBellButton />
+          </View>
+        ),
       }}>
       <Tabs.Screen
         name="index"
@@ -55,19 +62,6 @@ export default function TabLayout() {
           title: 'Profil',
           tabBarIcon: ({ color }) => (
             <SymbolView name={{ ios: 'person.fill', android: 'person', web: 'person' }} tintColor={color} size={26} />
-          ),
-        }}
-      />
-      <Tabs.Screen
-        name="settings"
-        options={{
-          title: 'Paramètres',
-          tabBarIcon: ({ color }) => (
-            <SymbolView
-              name={{ ios: 'eye.slash.fill', android: 'visibility_off', web: 'visibility_off' }}
-              tintColor={color}
-              size={26}
-            />
           ),
         }}
       />

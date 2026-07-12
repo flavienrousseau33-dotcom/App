@@ -23,7 +23,7 @@ via [EAS Build / Submit](https://docs.expo.dev/eas/).
   filtrés côté app). Il n'y a par ailleurs aucune découverte libre de croisement avec un inconnu.
 - **Les croisements ne se calculent qu'entre connexions mutuelles** (modèle "demande d'ami" :
   `connections.status = 'accepted'`), jamais entre deux comptes qui ne se sont pas ajoutés.
-- **Onglet Paramètres > Lieux cachés** : Maison (adresse déclarée, masqué par défaut), Travail
+- **Paramètres (roue crantée en haut) > Lieux cachés** : Maison (adresse déclarée, masqué par défaut), Travail
   (adresse déclarée, visible par défaut) et Lieux fréquents (détectés automatiquement — tout lieu
   visité 3 fois ou plus, visible par défaut). Chacun a son propre interrupteur ; masquer un lieu
   le rend invisible pour toute connexion, quelle que soit la distance, et s'applique à tous les
@@ -99,14 +99,15 @@ Scanne le QR code avec l'app **Expo Go** (iOS/Android) pour tester instantanéme
   d'abord), et celles où vous êtes passés au même endroit à des dates différentes (triée par
   écart de jours, le plus proche d'abord). La distance utilise les coordonnées précises du
   séjour quand elles existent, avec repli sur le nom de ville sinon.
-- **Paramètres > Lieux cachés** : Maison / Travail (adresse déclarée) et Lieux fréquents (détectés
-  automatiquement, `lib/homeDetection.ts`), chacun avec un interrupteur visible/masqué
-  (`lib/savedPlaces.ts` synchronise l'état vers les séjours concernés). Chaque séjour a aussi son
-  propre bouton "Masquer ce lieu" dans Mon trajet, indépendamment des lieux déclarés.
+- **Paramètres > Lieux cachés** (accessible via l'icône roue crantée en haut, pas un onglet) :
+  Maison / Travail (adresse déclarée) et Lieux fréquents (détectés automatiquement,
+  `lib/homeDetection.ts`), chacun avec un interrupteur visible/masqué (`lib/savedPlaces.ts`
+  synchronise l'état vers les séjours concernés). Chaque séjour a aussi son propre bouton
+  "Masquer ce lieu" dans Mon trajet, indépendamment des lieux déclarés.
 - Profil avec statistiques (nombre de séjours, nombre d'amis) et déconnexion
 - Un compte suspendu depuis le back office est automatiquement déconnecté à la prochaine
   ouverture de l'app.
-- **Centre de notifications** (icône cloche en haut des onglets) : demandes/acceptations d'amis
+- **Centre de notifications** (icône cloche en haut, à côté de la roue crantée) : demandes/acceptations d'amis
   en direct, et croisements détectés (voir section 11) — avec badge du nombre de non-lus et
   marquage lu au clic ou via "Tout marquer comme lu".
 
@@ -293,11 +294,13 @@ de notifications sans avoir à rouvrir l'app.
 ```
 app/
   (auth)/        écrans de connexion / inscription
-  (tabs)/        Trajet (index), Croisements, Amis, Profil, Paramètres (settings)
+  (tabs)/        Trajet (index), Croisements, Amis, Profil — les 4 onglets de la barre
   stay/new.tsx   formulaire modal d'ajout manuel de séjour
   crossing/map.tsx  carte OpenStreetMap d'un croisement
-  notifications.tsx  centre de notifications (modal)
-components/NotificationBellButton.tsx  icône cloche + badge non-lus, dans le header des onglets
+  notifications.tsx  centre de notifications (modal, ouvert depuis l'icône cloche)
+  settings.tsx   Lieux cachés (modal, ouvert depuis l'icône roue crantée — pas un onglet)
+components/NotificationBellButton.tsx  icône cloche + badge non-lus, dans le header
+components/SettingsGearButton.tsx  icône roue crantée, dans le header
 lib/geo.ts        clustering géographique des photos + calcul de recoupement de dates
 lib/photoScan.ts  orchestration du scan de la photothèque + sync Supabase
 lib/crossings.ts  calcul des croisements entre mes séjours et ceux d'un ami
